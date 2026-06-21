@@ -66,6 +66,21 @@ npm run test:local
 
 The `tools/list` response should include `run_date`. The `tools/call` response should include JSON text containing `stdout` from the local `date` command.
 
+## Persistent user service / 用户级常驻服务
+
+Use the user-level systemd service when you want the gateway to keep running after the terminal closes.
+
+```bash
+npm run service:install
+npm run service:status
+npm run service:logs
+npm run service:uninstall
+```
+
+`service:install` runs `npm run build` and starts `dist/index.js`; it does not use `npm run dev`.
+The service keeps running after the terminal exits.
+Cloudflare Tunnel access to `mcp.songlei.me` depends on this service listening on `127.0.0.1:8787`.
+
 ## Static bearer mode
 
 Use this before exposing through a tunnel if you are not using OAuth yet.

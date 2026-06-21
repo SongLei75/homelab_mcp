@@ -10,10 +10,14 @@
   "scripts": {
     "dev": "tsx src/index.ts",
     "typecheck": "tsc --noEmit",
-    "build": "tsc",
+    "build": "tsc -p tsconfig.build.json",
     "start": "node dist/index.js",
     "test": "vitest run",
-    "test:local": "bash scripts/local-validate.sh"
+    "test:local": "bash scripts/local-validate.sh",
+    "service:install": "bash scripts/install-user-service.sh",
+    "service:uninstall": "bash scripts/uninstall-user-service.sh",
+    "service:status": "systemctl --user status mcp-local-gateway --no-pager",
+    "service:logs": "journalctl --user -u mcp-local-gateway -n 100 --no-pager"
   },
   "dependencies": {
     "@cfworker/json-schema": "4.1.1",
