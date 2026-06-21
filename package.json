@@ -1,0 +1,32 @@
+{
+  "name": "mcp-local-gateway",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Minimal local MCP gateway for ChatGPT connector validation. P0 exposes only a fixed run_date tool.",
+  "engines": {
+    "node": ">=20.11.0"
+  },
+  "scripts": {
+    "dev": "tsx src/index.ts",
+    "typecheck": "tsc --noEmit",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "test": "vitest run",
+    "test:local": "bash scripts/local-validate.sh"
+  },
+  "dependencies": {
+    "@cfworker/json-schema": "4.1.1",
+    "@hono/node-server": "2.0.5",
+    "@modelcontextprotocol/server": "2.0.0-alpha.2",
+    "dotenv": "17.4.2",
+    "hono": "4.12.26",
+    "zod": "4.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "26.0.0",
+    "tsx": "4.22.4",
+    "typescript": "6.0.3",
+    "vitest": "4.1.9"
+  }
+}
