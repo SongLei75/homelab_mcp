@@ -9,9 +9,11 @@
   },
   "scripts": {
     "dev": "tsx src/index.ts",
+    "dev:stdio": "tsx src/stdio.ts",
     "typecheck": "tsc --noEmit",
     "build": "rm -rf dist && tsc -p tsconfig.build.json",
     "start": "node dist/index.js",
+    "start:stdio": "node dist/stdio.js",
     "test": "vitest run",
     "test:local": "bash scripts/local-validate.sh",
     "service:install": "bash scripts/install-user-service.sh",

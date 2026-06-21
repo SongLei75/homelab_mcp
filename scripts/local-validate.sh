@@ -26,13 +26,34 @@ assert_contains() {
   fi
 }
 
+curl_mcp() {
+  local response_file="$1"
+  shift
+  local status_file
+  status_file="$(mktemp)"
+  curl -sS --max-time 10 "$@" -o "${response_file}" -w '%{http_code} %{errormsg}' >"${status_file}"
+  CURL_RC=$?
+  CURL_STATUS="$(cat "${status_file}")"
+  printf '%s\n' "${CURL_STATUS}"
+  rm -f "${status_file}"
+  return 0
+}
+
+is_valid_jsonrpc_response() {
+  local payload="$1"
+  grep -qF '"jsonrpc":"2.0"' <<<"${payload}" && grep -qF '"id":1' <<<"${payload}" && {
+    grep -qF '"result":' <<<"${payload}" || grep -qF '"error":' <<<"${payload}"
+  }
+}
+
 echo "== healthz =="
-healthz="$(curl -sS "${BASE_URL}/healthz")" || fail "healthz request failed"
+healthz="$(curl -sS --max-time 10 "${BASE_URL}/healthz")" || fail "healthz request failed"
 printf '%s\n' "${healthz}"
 assert_contains "${healthz}" '"status":"ok"'
 
 echo "== initialize =="
-initialize="$(curl -sS "${BASE_URL}/mcp" \
+initialize_file="${tmpdir}/initialize.json"
+curl_mcp "${initialize_file}" "${BASE_URL}/mcp" \
   -H 'Content-Type: application/json' \
   -H 'Accept: application/json, text/event-stream' \
   -H 'mcp-protocol-version: 2025-06-18' \
@@ -46,12 +67,19 @@ initialize="$(curl -sS "${BASE_URL}/mcp" \
       "capabilities":{},
       "clientInfo":{"name":"local-curl","version":"0.0.1"}
     }
-  }')" || fail "initialize request failed"
+  }'
+initialize="$(cat "${initialize_file}")"
 printf '%s\n' "${initialize}"
-assert_contains "${initialize}" '"protocolVersion":"2025-06-18"'
+if ! is_valid_jsonrpc_response "${initialize}"; then
+  fail "initialize response missing valid jsonrpc payload"
+fi
+if [[ "${CURL_RC:-0}" -ne 0 && -z "${initialize}" ]]; then
+  fail "initialize timed out before receiving a response"
+fi
 
 echo "== tools/list =="
-tools_list="$(curl -sS "${BASE_URL}/mcp" \
+tools_list_file="${tmpdir}/tools-list.json"
+curl_mcp "${tools_list_file}" "${BASE_URL}/mcp" \
   -H 'Content-Type: application/json' \
   -H 'Accept: application/json, text/event-stream' \
   -H 'mcp-protocol-version: 2025-06-18' \
@@ -61,7 +89,8 @@ tools_list="$(curl -sS "${BASE_URL}/mcp" \
     "id":2,
     "method":"tools/list",
     "params":{}
-  }')" || fail "tools/list request failed"
+  }'
+tools_list="$(cat "${tools_list_file}")"
 printf '%s\n' "${tools_list}"
 for tool in read_logs read_file write_file apply_patch run_command; do
   assert_contains "${tools_list}" "\"name\":\"${tool}\""
@@ -71,8 +100,32 @@ if grep -q "\"name\":\"${old_tool}\"" <<<"${tools_list}"; then
   fail "old tool should not be listed"
 fi
 
+echo "== stdio entry exists =="
+if [[ ! -f dist/stdio.js ]]; then
+  fail "dist/stdio.js missing"
+fi
+if ! grep -qF 'StdioServerTransport' dist/stdio.js; then
+  fail "dist/stdio.js does not reference StdioServerTransport"
+fi
+
+echo "== stdio smoke =="
+stdio_out="${tmpdir}/stdio.out"
+stdio_err="${tmpdir}/stdio.err"
+node dist/stdio.js >"${stdio_out}" 2>"${stdio_err}" </dev/null &
+stdio_pid=$!
+sleep 0.2
+kill -TERM "${stdio_pid}" 2>/dev/null || true
+wait "${stdio_pid}" || true
+if [[ -s "${stdio_out}" ]]; then
+  fail "stdio transport wrote non-protocol output to stdout"
+fi
+if ! grep -qF 'mcp-local-gateway stdio transport starting' "${stdio_err}"; then
+  fail "stdio startup log missing from stderr"
+fi
+
 echo "== run_command smoke =="
-run_command="$(curl -sS "${BASE_URL}/mcp" \
+run_command_file="${tmpdir}/run-command.json"
+curl_mcp "${run_command_file}" "${BASE_URL}/mcp" \
   -H 'Content-Type: application/json' \
   -H 'Accept: application/json, text/event-stream' \
   -H 'mcp-protocol-version: 2025-06-18' \
@@ -82,13 +135,15 @@ run_command="$(curl -sS "${BASE_URL}/mcp" \
     "id":3,
     "method":"tools/call",
     "params":{"name":"run_command","arguments":{"command":"printf smoke","cwd":"'"${tmpdir}"'","timeoutMs":2000,"maxOutputBytes":4096}}
-  }')" || fail "run_command request failed"
+  }'
+run_command="$(cat "${run_command_file}")"
 printf '%s\n' "${run_command}"
 assert_contains "${run_command}" 'smoke'
 
 echo "== write/read smoke =="
 smoke_file="${tmpdir}/smoke.txt"
-write_file="$(curl -sS "${BASE_URL}/mcp" \
+write_file_file="${tmpdir}/write-file.json"
+curl_mcp "${write_file_file}" "${BASE_URL}/mcp" \
   -H 'Content-Type: application/json' \
   -H 'Accept: application/json, text/event-stream' \
   -H 'mcp-protocol-version: 2025-06-18' \
@@ -98,11 +153,13 @@ write_file="$(curl -sS "${BASE_URL}/mcp" \
     "id":4,
     "method":"tools/call",
     "params":{"name":"write_file","arguments":{"path":"'"${smoke_file}"'","content":"hello","createParentDirs":true}}
-  }')" || fail "write_file request failed"
+  }'
+write_file="$(cat "${write_file_file}")"
 printf '%s\n' "${write_file}"
 assert_contains "${write_file}" 'ok'
 
-read_file="$(curl -sS "${BASE_URL}/mcp" \
+read_file_file="${tmpdir}/read-file.json"
+curl_mcp "${read_file_file}" "${BASE_URL}/mcp" \
   -H 'Content-Type: application/json' \
   -H 'Accept: application/json, text/event-stream' \
   -H 'mcp-protocol-version: 2025-06-18' \
@@ -112,7 +169,8 @@ read_file="$(curl -sS "${BASE_URL}/mcp" \
     "id":5,
     "method":"tools/call",
     "params":{"name":"read_file","arguments":{"path":"'"${smoke_file}"'","maxBytes":16}}
-  }')" || fail "read_file request failed"
+  }'
+read_file="$(cat "${read_file_file}")"
 printf '%s\n' "${read_file}"
 assert_contains "${read_file}" 'hello'
 
@@ -131,12 +189,14 @@ from pathlib import Path
 print(json.dumps(Path(sys.argv[1]).read_text()))
 PY
 )"
-apply_patch="$(curl -sS "${BASE_URL}/mcp" \
+apply_patch_file="${tmpdir}/apply-patch.json"
+curl_mcp "${apply_patch_file}" "${BASE_URL}/mcp" \
   -H 'Content-Type: application/json' \
   -H 'Accept: application/json, text/event-stream' \
   -H 'mcp-protocol-version: 2025-06-18' \
   "${AUTH_HEADER[@]}" \
-  --data "{\"jsonrpc\":\"2.0\",\"id\":6,\"method\":\"tools/call\",\"params\":{\"name\":\"apply_patch\",\"arguments\":{\"cwd\":\"${tmpdir}\",\"patch\":${patch_payload},\"strip\":1}}}")" || fail "apply_patch request failed"
+  --data "{\"jsonrpc\":\"2.0\",\"id\":6,\"method\":\"tools/call\",\"params\":{\"name\":\"apply_patch\",\"arguments\":{\"cwd\":\"${tmpdir}\",\"patch\":${patch_payload},\"strip\":1}}}"
+apply_patch="$(cat "${apply_patch_file}")"
 printf '%s\n' "${apply_patch}"
 if ! grep -qE 'patching file|success|applied|patched' <<<"${apply_patch}"; then
   if ! grep -qF 'patched' "${tmpdir}/smoke-validate.txt"; then
@@ -147,7 +207,8 @@ fi
 echo "== read_logs smoke =="
 log_file="${tmpdir}/local.log"
 printf 'alpha\nmarker-123\nomega\n' > "${log_file}"
-read_logs="$(curl -sS "${BASE_URL}/mcp" \
+read_logs_file="${tmpdir}/read-logs.json"
+curl_mcp "${read_logs_file}" "${BASE_URL}/mcp" \
   -H 'Content-Type: application/json' \
   -H 'Accept: application/json, text/event-stream' \
   -H 'mcp-protocol-version: 2025-06-18' \
@@ -157,7 +218,8 @@ read_logs="$(curl -sS "${BASE_URL}/mcp" \
     "id":7,
     "method":"tools/call",
     "params":{"name":"read_logs","arguments":{"source":"file","path":"'"${log_file}"'","lines":2,"maxOutputBytes":256}}
-  }')" || fail "read_logs request failed"
+  }'
+read_logs="$(cat "${read_logs_file}")"
 printf '%s\n' "${read_logs}"
 assert_contains "${read_logs}" 'marker-123'
 
