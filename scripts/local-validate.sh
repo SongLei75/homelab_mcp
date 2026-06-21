@@ -111,16 +111,30 @@ fi
 echo "== stdio smoke =="
 stdio_out="${tmpdir}/stdio.out"
 stdio_err="${tmpdir}/stdio.err"
-node dist/stdio.js >"${stdio_out}" 2>"${stdio_err}" </dev/null &
-stdio_pid=$!
-sleep 0.2
-kill -TERM "${stdio_pid}" 2>/dev/null || true
-wait "${stdio_pid}" || true
-if [[ -s "${stdio_out}" ]]; then
-  fail "stdio transport wrote non-protocol output to stdout"
-fi
+timeout 2s node dist/stdio.js >"${stdio_out}" 2>"${stdio_err}" <<EOF || true
+{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"local-stdio","version":"0.0.1"}}}
+{"jsonrpc":"2.0","method":"notifications/initialized","params":{}}
+{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"run_command","arguments":{"command":"printf stdio-smoke","cwd":"${tmpdir}","timeoutMs":2000,"maxOutputBytes":4096}}}
+EOF
 if ! grep -qF 'mcp-local-gateway stdio transport starting' "${stdio_err}"; then
   fail "stdio startup log missing from stderr"
+fi
+if grep -qE 'timestamp|tool\.policy|tool\.exec|requestId|decision' "${stdio_out}"; then
+  fail "stdio stdout leaked audit fields"
+fi
+while IFS= read -r line; do
+  [[ -z "${line}" ]] && continue
+  if ! python3 - <<'PY' "${line}" >/dev/null 2>&1; then
+import json
+import sys
+obj = json.loads(sys.argv[1])
+raise SystemExit(0 if isinstance(obj, dict) and obj.get("jsonrpc") == "2.0" else 1)
+PY
+    fail "stdio stdout contained non-MCP output: ${line}"
+  fi
+done < "${stdio_out}"
+if ! grep -qF 'stdio-smoke' "${stdio_out}"; then
+  fail "stdio run_command response missing stdio-smoke"
 fi
 
 echo "== run_command smoke =="

@@ -6,7 +6,10 @@ import { AuditLogger } from './audit/audit.js';
 import { loadConfig } from './config.js';
 import { createMcpServer } from './mcp/server.js';
 
-const config = loadConfig();
+const config = {
+  ...loadConfig(),
+  auditToStdout: false
+};
 const audit = new AuditLogger(config);
 const server = createMcpServer(audit, config);
 const transport = new StdioServerTransport();
