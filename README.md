@@ -81,6 +81,26 @@ npm run service:uninstall
 The service keeps running after the terminal exits.
 Cloudflare Tunnel access to `mcp.songlei.me` depends on this service listening on `127.0.0.1:8787`.
 
+## Persistent OpenAI Tunnel / OpenAI Tunnel 常驻运行
+
+Use the user-level systemd service when you want `tunnel-client` to keep the OpenAI Tunnel process running after the terminal closes.
+
+```bash
+npm run tunnel:install
+npm run tunnel:status
+npm run tunnel:logs
+npm run tunnel:uninstall
+```
+
+`tunnel:install` runs `npm ci` and `npm run build`, checks `tunnel-client`, `~/.config/homelab-mcp/openai-tunnel.env`, and `~/.config/tunnel-client/homelab-stdio.yaml`, then installs `openai-tunnel-client.service`.
+The service uses `WorkingDirectory` at the repository root, loads `~/.config/homelab-mcp/openai-tunnel.env`, and runs:
+
+```bash
+tunnel-client run --profile homelab-stdio --health.listen-addr 127.0.0.1:18080 --health.url-file /tmp/homelab-openai-tunnel-stdio-health.url --log.file /tmp/homelab-openai-tunnel-stdio.log
+```
+
+After install, the script runs `systemctl --user daemon-reload`, `enable`, `restart`, and `status` for `openai-tunnel-client.service`, then waits for both `/healthz` and `/readyz` to succeed through the URL written to `/tmp/homelab-openai-tunnel-stdio-health.url`.
+
 ## Static bearer mode
 
 Use this before exposing through a tunnel if you are not using OAuth yet.

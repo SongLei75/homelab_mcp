@@ -19,7 +19,11 @@
     "service:install": "bash scripts/install-user-service.sh",
     "service:uninstall": "bash scripts/uninstall-user-service.sh",
     "service:status": "systemctl --user status mcp-local-gateway --no-pager",
-    "service:logs": "journalctl --user -u mcp-local-gateway -n 100 --no-pager"
+    "service:logs": "journalctl --user -u mcp-local-gateway -n 100 --no-pager",
+    "tunnel:install": "bash scripts/install-openai-tunnel-service.sh",
+    "tunnel:uninstall": "bash scripts/uninstall-openai-tunnel-service.sh",
+    "tunnel:status": "systemctl --user status openai-tunnel-client.service --no-pager",
+    "tunnel:logs": "journalctl --user -u openai-tunnel-client.service -n 100 --no-pager"
   },
   "dependencies": {
     "@cfworker/json-schema": "4.1.1",
