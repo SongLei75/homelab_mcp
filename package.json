@@ -3,14 +3,14 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Minimal local MCP gateway for ChatGPT connector validation. P0 exposes only a fixed run_date tool.",
+  "description": "Local homelab MCP tool gateway for shell, file, patch, and log workflows.",
   "engines": {
     "node": ">=20.11.0"
   },
   "scripts": {
     "dev": "tsx src/index.ts",
     "typecheck": "tsc --noEmit",
-    "build": "tsc -p tsconfig.build.json",
+    "build": "rm -rf dist && tsc -p tsconfig.build.json",
     "start": "node dist/index.js",
     "test": "vitest run",
     "test:local": "bash scripts/local-validate.sh",

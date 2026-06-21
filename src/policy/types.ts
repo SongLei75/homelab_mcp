@@ -1,10 +1,8 @@
 export interface PolicyRequest {
   requestId: string;
   toolName: string;
-  fixedCommand: string;
-  argumentsKeys: string[];
+  command?: string;
+  args?: unknown;
 }
 
-export type PolicyDecision =
-  | { allow: true }
-  | { allow: false; reason: string };
+export type PolicyDecision = { allow: true };

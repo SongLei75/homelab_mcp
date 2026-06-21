@@ -1,33 +1,31 @@
 import { spawn } from 'node:child_process';
-import { existsSync } from 'node:fs';
 
-export interface FixedExecResult {
+export interface CommandExecResult {
   stdout: string;
   stderr: string;
   exitCode: number | null;
   signal: NodeJS.Signals | null;
   durationMs: number;
   timedOut: boolean;
+  stdoutTruncated: boolean;
+  stderrTruncated: boolean;
 }
 
-export interface FixedExecOptions {
+export interface CommandExecOptions {
+  command: string;
+  cwd?: string;
   timeoutMs?: number;
   maxOutputBytes?: number;
 }
 
-function getDateBinary(): string {
-  if (existsSync('/usr/bin/date')) return '/usr/bin/date';
-  if (existsSync('/bin/date')) return '/bin/date';
-  return 'date';
-}
-
-export function execFixedDate(options: FixedExecOptions = {}): Promise<FixedExecResult> {
+export function execCommand(options: CommandExecOptions): Promise<CommandExecResult> {
   const timeoutMs = options.timeoutMs ?? 3000;
   const maxOutputBytes = options.maxOutputBytes ?? 16 * 1024;
   const startedAt = Date.now();
 
   return new Promise((resolve, reject) => {
-    const child = spawn(getDateBinary(), [], {
+    const child = spawn('/bin/bash', ['-lc', options.command], {
+      cwd: options.cwd,
       shell: false,
       stdio: ['ignore', 'pipe', 'pipe'],
       env: {
@@ -39,6 +37,8 @@ export function execFixedDate(options: FixedExecOptions = {}): Promise<FixedExec
 
     let stdout = Buffer.alloc(0);
     let stderr = Buffer.alloc(0);
+    let stdoutTruncated = false;
+    let stderrTruncated = false;
     let timedOut = false;
 
     const timer = setTimeout(() => {
@@ -47,11 +47,23 @@ export function execFixedDate(options: FixedExecOptions = {}): Promise<FixedExec
     }, timeoutMs);
 
     child.stdout.on('data', chunk => {
-      stdout = Buffer.concat([stdout, Buffer.from(chunk)]).subarray(0, maxOutputBytes);
+      if (stdout.length >= maxOutputBytes) {
+        stdoutTruncated = true;
+        return;
+      }
+      const next = Buffer.concat([stdout, Buffer.from(chunk)]);
+      stdoutTruncated ||= next.length > maxOutputBytes;
+      stdout = next.subarray(0, maxOutputBytes);
     });
 
     child.stderr.on('data', chunk => {
-      stderr = Buffer.concat([stderr, Buffer.from(chunk)]).subarray(0, maxOutputBytes);
+      if (stderr.length >= maxOutputBytes) {
+        stderrTruncated = true;
+        return;
+      }
+      const next = Buffer.concat([stderr, Buffer.from(chunk)]);
+      stderrTruncated ||= next.length > maxOutputBytes;
+      stderr = next.subarray(0, maxOutputBytes);
     });
 
     child.on('error', error => {
@@ -67,7 +79,9 @@ export function execFixedDate(options: FixedExecOptions = {}): Promise<FixedExec
         exitCode,
         signal,
         durationMs: Date.now() - startedAt,
-        timedOut
+        timedOut,
+        stdoutTruncated,
+        stderrTruncated
       });
     });
   });

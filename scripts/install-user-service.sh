@@ -40,7 +40,8 @@ WantedBy=default.target
 EOF
 
 systemctl --user daemon-reload
-systemctl --user enable --now mcp-local-gateway.service
+systemctl --user enable mcp-local-gateway.service
+systemctl --user restart mcp-local-gateway.service
 systemctl --user status mcp-local-gateway.service --no-pager
 for _ in {1..20}; do
   if curl -fsS http://127.0.0.1:8787/healthz; then

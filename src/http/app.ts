@@ -18,7 +18,7 @@ type HonoEnv = {
 
 export async function createApp(config: AppConfig) {
   const audit = new AuditLogger(config);
-  const server = createMcpServer(audit);
+  const server = createMcpServer(audit, config);
   const transport = createMcpTransport();
 
   await server.connect(transport);
