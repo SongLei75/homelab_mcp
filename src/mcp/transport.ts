@@ -1,6 +1,11 @@
 import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/server';
 
-export function createMcpTransport(): WebStandardStreamableHTTPServerTransport {
-  // Stateless transport: enough for the P0 date-tool validation path.
-  return new WebStandardStreamableHTTPServerTransport();
+type StreamableHttpTransportOptions = ConstructorParameters<
+  typeof WebStandardStreamableHTTPServerTransport
+>[0];
+
+export function createMcpTransport(
+  options: StreamableHttpTransportOptions = {}
+): WebStandardStreamableHTTPServerTransport {
+  return new WebStandardStreamableHTTPServerTransport(options);
 }

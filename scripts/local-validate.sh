@@ -3,6 +3,7 @@ set -u
 
 BASE_URL="${BASE_URL:-http://127.0.0.1:8787}"
 AUTH_HEADER=()
+MCP_SESSION_HEADER=()
 FAILED=0
 if [[ -n "${MCP_STATIC_BEARER_TOKEN:-}" ]]; then
   AUTH_HEADER=(-H "Authorization: Bearer ${MCP_STATIC_BEARER_TOKEN}")
@@ -53,7 +54,8 @@ assert_contains "${healthz}" '"status":"ok"'
 
 echo "== initialize =="
 initialize_file="${tmpdir}/initialize.json"
-curl_mcp "${initialize_file}" "${BASE_URL}/mcp" \
+initialize_headers="${tmpdir}/initialize.headers"
+curl_mcp "${initialize_file}" -D "${initialize_headers}" "${BASE_URL}/mcp" \
   -H 'Content-Type: application/json' \
   -H 'Accept: application/json, text/event-stream' \
   -H 'mcp-protocol-version: 2025-06-18' \
@@ -76,6 +78,12 @@ fi
 if [[ "${CURL_RC:-0}" -ne 0 && -z "${initialize}" ]]; then
   fail "initialize timed out before receiving a response"
 fi
+MCP_SESSION_ID="$(awk 'BEGIN{IGNORECASE=1} /^mcp-session-id:/ {sub(/\r$/, ""); sub(/^[^:]*:[[:space:]]*/, ""); print; exit}' "${initialize_headers}")"
+if [[ -z "${MCP_SESSION_ID}" ]]; then
+  fail "initialize response missing mcp-session-id header"
+else
+  MCP_SESSION_HEADER=(-H "mcp-session-id: ${MCP_SESSION_ID}")
+fi
 
 echo "== tools/list =="
 tools_list_file="${tmpdir}/tools-list.json"
@@ -84,6 +92,7 @@ curl_mcp "${tools_list_file}" "${BASE_URL}/mcp" \
   -H 'Accept: application/json, text/event-stream' \
   -H 'mcp-protocol-version: 2025-06-18' \
   "${AUTH_HEADER[@]}" \
+  "${MCP_SESSION_HEADER[@]}" \
   --data '{
     "jsonrpc":"2.0",
     "id":2,
@@ -144,6 +153,7 @@ curl_mcp "${run_command_file}" "${BASE_URL}/mcp" \
   -H 'Accept: application/json, text/event-stream' \
   -H 'mcp-protocol-version: 2025-06-18' \
   "${AUTH_HEADER[@]}" \
+  "${MCP_SESSION_HEADER[@]}" \
   --data '{
     "jsonrpc":"2.0",
     "id":3,
@@ -162,6 +172,7 @@ curl_mcp "${write_file_file}" "${BASE_URL}/mcp" \
   -H 'Accept: application/json, text/event-stream' \
   -H 'mcp-protocol-version: 2025-06-18' \
   "${AUTH_HEADER[@]}" \
+  "${MCP_SESSION_HEADER[@]}" \
   --data '{
     "jsonrpc":"2.0",
     "id":4,
@@ -178,6 +189,7 @@ curl_mcp "${read_file_file}" "${BASE_URL}/mcp" \
   -H 'Accept: application/json, text/event-stream' \
   -H 'mcp-protocol-version: 2025-06-18' \
   "${AUTH_HEADER[@]}" \
+  "${MCP_SESSION_HEADER[@]}" \
   --data '{
     "jsonrpc":"2.0",
     "id":5,
@@ -209,6 +221,7 @@ curl_mcp "${apply_patch_file}" "${BASE_URL}/mcp" \
   -H 'Accept: application/json, text/event-stream' \
   -H 'mcp-protocol-version: 2025-06-18' \
   "${AUTH_HEADER[@]}" \
+  "${MCP_SESSION_HEADER[@]}" \
   --data "{\"jsonrpc\":\"2.0\",\"id\":6,\"method\":\"tools/call\",\"params\":{\"name\":\"apply_patch\",\"arguments\":{\"cwd\":\"${tmpdir}\",\"patch\":${patch_payload},\"strip\":1}}}"
 apply_patch="$(cat "${apply_patch_file}")"
 printf '%s\n' "${apply_patch}"
@@ -227,6 +240,7 @@ curl_mcp "${read_logs_file}" "${BASE_URL}/mcp" \
   -H 'Accept: application/json, text/event-stream' \
   -H 'mcp-protocol-version: 2025-06-18' \
   "${AUTH_HEADER[@]}" \
+  "${MCP_SESSION_HEADER[@]}" \
   --data '{
     "jsonrpc":"2.0",
     "id":7,
@@ -236,5 +250,17 @@ curl_mcp "${read_logs_file}" "${BASE_URL}/mcp" \
 read_logs="$(cat "${read_logs_file}")"
 printf '%s\n' "${read_logs}"
 assert_contains "${read_logs}" 'marker-123'
+
+echo "== delete session =="
+if [[ -n "${MCP_SESSION_ID:-}" ]]; then
+  delete_session_file="${tmpdir}/delete-session.json"
+  curl_mcp "${delete_session_file}" "${BASE_URL}/mcp" \
+    -X DELETE \
+    -H 'Accept: application/json, text/event-stream' \
+    -H 'mcp-protocol-version: 2025-06-18' \
+    "${AUTH_HEADER[@]}" \
+    "${MCP_SESSION_HEADER[@]}" >/dev/null
+  printf '%s\n' "${CURL_STATUS}"
+fi
 
 [ "${FAILED}" -eq 0 ]

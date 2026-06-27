@@ -5,6 +5,7 @@ import type { CallToolResult } from '@modelcontextprotocol/server';
 import * as z from 'zod/v4';
 
 import { AuditLogger } from '../audit/audit.js';
+import { textOutputSchema, toolMeta, toolResult } from './schema.js';
 
 export const readFileInputSchema = z.object({
   path: z.string().min(1),
@@ -17,7 +18,15 @@ export function createReadFileTool(audit: AuditLogger) {
     definition: {
       title: 'Read file',
       description: 'Read UTF-8 text from a local file.',
-      inputSchema: readFileInputSchema
+      inputSchema: readFileInputSchema,
+      outputSchema: textOutputSchema,
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: true
+      },
+      _meta: toolMeta()
     },
     handler: async (args: Record<string, unknown>): Promise<CallToolResult> => {
       const requestId = randomUUID();
@@ -34,7 +43,7 @@ export function createReadFileTool(audit: AuditLogger) {
         args: parsed,
         path: parsed.path
       });
-      return { content: [{ type: 'text', text }] };
+      return toolResult({ text }, text);
     }
   };
 }

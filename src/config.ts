@@ -11,6 +11,7 @@ export interface AppConfig {
   maxOutputBytes: number;
   auditLogFile: string;
   auditMaxBytes: number;
+  sessionTtlMs?: number;
 }
 
 function parsePort(value: string | undefined, fallback: number): number {
@@ -74,6 +75,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     timeoutMs: parsePositiveInt(env.TIMEOUT_MS, 3000, 'TIMEOUT_MS'),
     maxOutputBytes: parsePositiveInt(env.MAX_OUTPUT_BYTES, 16 * 1024, 'MAX_OUTPUT_BYTES'),
     auditLogFile: env.AUDIT_LOG_FILE?.trim() || '/tmp/homelab-mcp/audit.jsonl',
-    auditMaxBytes: parsePositiveInt(env.AUDIT_MAX_BYTES, 300 * 1024 * 1024, 'AUDIT_MAX_BYTES')
+    auditMaxBytes: parsePositiveInt(env.AUDIT_MAX_BYTES, 300 * 1024 * 1024, 'AUDIT_MAX_BYTES'),
+    sessionTtlMs: parsePositiveInt(env.MCP_SESSION_TTL_MS, 30 * 60 * 1000, 'MCP_SESSION_TTL_MS')
   };
 }

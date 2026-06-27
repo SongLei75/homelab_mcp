@@ -6,6 +6,7 @@ import type { CallToolResult } from '@modelcontextprotocol/server';
 import * as z from 'zod/v4';
 
 import { AuditLogger } from '../audit/audit.js';
+import { okOutputSchema, toolMeta, toolResult } from './schema.js';
 
 export const writeFileInputSchema = z.object({
   path: z.string().min(1),
@@ -19,7 +20,15 @@ export function createWriteFileTool(audit: AuditLogger) {
     definition: {
       title: 'Write file',
       description: 'Write UTF-8 text to a local file.',
-      inputSchema: writeFileInputSchema
+      inputSchema: writeFileInputSchema,
+      outputSchema: okOutputSchema,
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: false,
+        openWorldHint: true
+      },
+      _meta: toolMeta()
     },
     handler: async (args: Record<string, unknown>): Promise<CallToolResult> => {
       const requestId = randomUUID();
@@ -37,7 +46,7 @@ export function createWriteFileTool(audit: AuditLogger) {
         args: parsed,
         path: parsed.path
       });
-      return { content: [{ type: 'text', text: 'ok' }] };
+      return toolResult({ ok: true }, 'ok');
     }
   };
 }

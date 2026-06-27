@@ -8,6 +8,7 @@ import * as z from 'zod/v4';
 
 import { AuditLogger } from '../audit/audit.js';
 import { execCommand } from '../exec/command.js';
+import { commandOutputSchema, toolMeta, toolResult } from './schema.js';
 
 export const applyPatchInputSchema = z.object({
   cwd: z.string().optional(),
@@ -21,7 +22,15 @@ export function createApplyPatchTool(audit: AuditLogger) {
     definition: {
       title: 'Apply patch',
       description: 'Apply a unified diff using the system patch command.',
-      inputSchema: applyPatchInputSchema
+      inputSchema: applyPatchInputSchema,
+      outputSchema: commandOutputSchema,
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: false,
+        openWorldHint: true
+      },
+      _meta: toolMeta()
     },
     handler: async (args: Record<string, unknown>): Promise<CallToolResult> => {
       const requestId = randomUUID();
@@ -50,8 +59,19 @@ export function createApplyPatchTool(audit: AuditLogger) {
         stderrTruncated: result.stderrTruncated
       });
       return {
+        ...toolResult({
+          command,
+          cwd: parsed.cwd,
+          stdout: result.stdout,
+          stderr: result.stderr,
+          exitCode: result.exitCode,
+          signal: result.signal,
+          durationMs: result.durationMs,
+          timedOut: result.timedOut,
+          stdoutTruncated: result.stdoutTruncated,
+          stderrTruncated: result.stderrTruncated
+        }, result.stdout || result.stderr || 'ok'),
         isError: result.exitCode !== 0,
-        content: [{ type: 'text', text: result.stdout || result.stderr || 'ok' }]
       };
     }
   };

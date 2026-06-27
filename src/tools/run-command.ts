@@ -7,6 +7,7 @@ import { AuditLogger } from '../audit/audit.js';
 import { checkToolCall } from '../policy/policy.js';
 import { execCommand } from '../exec/command.js';
 import type { AppConfig } from '../config.js';
+import { commandOutputSchema, toolMeta, toolResult } from './schema.js';
 
 export const runCommandInputSchema = z.object({
   command: z.string().min(1),
@@ -21,7 +22,15 @@ export function createRunCommandTool(audit: AuditLogger, config: AppConfig) {
     definition: {
       title: 'Run command',
       description: 'Execute a local command through /bin/bash -lc.',
-      inputSchema: runCommandInputSchema
+      inputSchema: runCommandInputSchema,
+      outputSchema: commandOutputSchema,
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: false,
+        openWorldHint: true
+      },
+      _meta: toolMeta()
     },
     handler: async (args: Record<string, unknown>): Promise<CallToolResult> => {
       const requestId = randomUUID();
@@ -79,23 +88,22 @@ export function createRunCommandTool(audit: AuditLogger, config: AppConfig) {
         stderrTruncated: result.stderrTruncated
       });
 
+      const output = {
+        command: parsed.data.command,
+        cwd: parsed.data.cwd,
+        stdout: result.stdout,
+        stderr: result.stderr,
+        exitCode: result.exitCode,
+        signal: result.signal,
+        durationMs: result.durationMs,
+        timedOut: result.timedOut,
+        stdoutTruncated: result.stdoutTruncated,
+        stderrTruncated: result.stderrTruncated
+      };
+
       return {
-        isError: result.exitCode !== 0,
-        content: [{
-          type: 'text',
-          text: JSON.stringify({
-            command: parsed.data.command,
-            cwd: parsed.data.cwd,
-            stdout: result.stdout,
-            stderr: result.stderr,
-            exitCode: result.exitCode,
-            signal: result.signal,
-            durationMs: result.durationMs,
-            timedOut: result.timedOut,
-            stdoutTruncated: result.stdoutTruncated,
-            stderrTruncated: result.stderrTruncated
-          }, null, 2)
-        }]
+        ...toolResult(output),
+        isError: result.exitCode !== 0
       };
     }
   };

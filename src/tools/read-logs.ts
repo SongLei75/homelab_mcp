@@ -6,6 +6,7 @@ import * as z from 'zod/v4';
 
 import { AuditLogger } from '../audit/audit.js';
 import { execCommand } from '../exec/command.js';
+import { textOutputSchema, toolMeta, toolResult } from './schema.js';
 
 function truncateUtf8(text: string, maxBytes: number): string {
   const bytes = Buffer.from(text, 'utf8');
@@ -27,7 +28,15 @@ export function createReadLogsTool(audit: AuditLogger) {
     definition: {
       title: 'Read logs',
       description: 'Read local journalctl output or tail a local log file.',
-      inputSchema: readLogsInputSchema
+      inputSchema: readLogsInputSchema,
+      outputSchema: textOutputSchema,
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: true
+      },
+      _meta: toolMeta()
     },
     handler: async (args: Record<string, unknown>): Promise<CallToolResult> => {
       const requestId = randomUUID();
@@ -66,7 +75,7 @@ export function createReadLogsTool(audit: AuditLogger) {
         path: parsed.path
       });
 
-      return { content: [{ type: 'text', text }] };
+      return toolResult({ text }, text);
     }
   };
 }
