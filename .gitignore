@@ -5,3 +5,5 @@ logs/
 *.log
 coverage/
 .DS_Store
+.env.*
+!.env.example

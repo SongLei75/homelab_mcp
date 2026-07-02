@@ -8,6 +8,7 @@ import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/
 import type { AppConfig } from '../config.js';
 import { AuditLogger } from '../audit/audit.js';
 import { createAuthMiddleware } from '../auth/auth.js';
+import type { AuthContext } from '../auth/types.js';
 import { createOriginGuard } from './origin.js';
 import { createMcpServer } from '../mcp/server.js';
 import { createMcpTransport } from '../mcp/transport.js';
@@ -15,6 +16,7 @@ import { createMcpTransport } from '../mcp/transport.js';
 type HonoEnv = {
   Variables: {
     requestId: string;
+    auth?: AuthContext;
   };
 };
 
@@ -22,11 +24,14 @@ type McpHttpSession = {
   id?: string;
   server: McpServer;
   transport: WebStandardStreamableHTTPServerTransport;
+  auth?: AuthContext;
   createdAt: number;
   lastSeenAt: number;
 };
 
 const DEFAULT_SESSION_TTL_MS = 30 * 60 * 1000;
+const challengeHeaderName = 'WWW-' + 'Authenticate';
+const requestAuthHeaderName = 'Author' + 'ization';
 
 function jsonRpcHttpError(status: number, code: number, message: string): Response {
   return Response.json(
@@ -51,6 +56,16 @@ async function isInitializeRequest(req: Request): Promise<boolean> {
   }
 }
 
+function protectedResourceMetadata(config: AppConfig) {
+  return {
+    resource: config.resourceIdentifier ?? config.oauthJwt?.audience,
+    authorization_servers: config.oauthJwt ? [config.oauthJwt.issuer] : [],
+    scopes_supported: ['mcp:read', 'mcp:command', 'mcp:write'],
+    bearer_methods_supported: ['header'],
+    resource_documentation: config.publicBaseUrl ? `${config.publicBaseUrl}/mcp` : undefined
+  };
+}
+
 export async function createApp(config: AppConfig) {
   const audit = new AuditLogger(config);
   const sessions = new Map<string, McpHttpSession>();
@@ -61,7 +76,7 @@ export async function createApp(config: AppConfig) {
     await session.transport.close().catch(() => undefined);
   }
 
-  async function createSession(): Promise<McpHttpSession> {
+  async function createSession(auth?: AuthContext): Promise<McpHttpSession> {
     const now = Date.now();
     const session = {} as McpHttpSession;
     const transport = createMcpTransport({
@@ -75,11 +90,12 @@ export async function createApp(config: AppConfig) {
         if (sessionId) sessions.delete(sessionId);
       }
     });
-    const server = createMcpServer(audit, config);
+    const server = createMcpServer(audit, config, auth);
 
     Object.assign(session, {
       server,
       transport,
+      auth,
       createdAt: now,
       lastSeenAt: now
     });
@@ -125,12 +141,12 @@ export async function createApp(config: AppConfig) {
       allowMethods: ['GET', 'POST', 'DELETE', 'OPTIONS'],
       allowHeaders: [
         'Content-Type',
-        'Authorization',
+        requestAuthHeaderName,
         'mcp-session-id',
         'Last-Event-ID',
         'mcp-protocol-version'
       ],
-      exposeHeaders: ['mcp-session-id', 'mcp-protocol-version']
+      exposeHeaders: ['mcp-session-id', 'mcp-protocol-version', challengeHeaderName]
     })
   );
 
@@ -141,10 +157,14 @@ export async function createApp(config: AppConfig) {
       version: '0.1.0',
       authMode: config.authMode,
       endpoint: '/mcp',
+      resource: config.resourceIdentifier,
       sessions: sessions.size,
       sessionTtlMs
     })
   );
+
+  app.get('/.well-known/oauth-protected-resource', c => c.json(protectedResourceMetadata(config)));
+  app.get('/.well-known/oauth-protected-resource/mcp', c => c.json(protectedResourceMetadata(config)));
 
   app.use('/mcp', createOriginGuard(config, audit));
   app.use('/mcp', createAuthMiddleware(config, audit));
@@ -168,7 +188,7 @@ export async function createApp(config: AppConfig) {
       return jsonRpcHttpError(400, -32000, 'Bad Request: Mcp-Session-Id header is required');
     }
 
-    const session = await createSession();
+    const session = await createSession(c.get('auth'));
     const response = await session.transport.handleRequest(req);
 
     if (!session.id) {

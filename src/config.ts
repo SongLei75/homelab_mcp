@@ -1,10 +1,22 @@
-export type AuthMode = 'off' | 'static_bearer' | 'oauth_placeholder';
+export type AuthMode = 'off' | 'static_bearer' | 'oauth_placeholder' | 'oauth_jwt';
+
+export interface OAuthJwtConfig {
+  provider: string;
+  issuer: string;
+  audience: string;
+  requiredScopes: string[];
+  metadataUrl: string;
+  jwksUrl: string;
+}
 
 export interface AppConfig {
   host: string;
   port: number;
   authMode: AuthMode;
   staticBearerToken?: string;
+  oauthJwt?: OAuthJwtConfig;
+  publicBaseUrl?: string;
+  resourceIdentifier?: string;
   allowedOrigins: string[];
   auditToStdout: boolean;
   timeoutMs: number;
@@ -39,7 +51,7 @@ function parsePositiveInt(value: string | undefined, fallback: number, name: str
 
 function parseAuthMode(value: string | undefined): AuthMode {
   const mode = (value ?? 'off').trim();
-  if (mode === 'off' || mode === 'static_bearer' || mode === 'oauth_placeholder') return mode;
+  if (mode === 'off' || mode === 'static_bearer' || mode === 'oauth_placeholder' || mode === 'oauth_jwt') return mode;
   throw new Error(`Invalid MCP_AUTH_MODE: ${mode}`);
 }
 
@@ -51,14 +63,72 @@ function parseOrigins(value: string | undefined): string[] {
     .filter(Boolean);
 }
 
+function parseCsv(value: string | undefined, fallback: string[]): string[] {
+  if (!value) return fallback;
+  return value
+    .split(',')
+    .map(item => item.trim())
+    .filter(Boolean);
+}
+
+function trimTrailingSlash(value: string): string {
+  return value.replace(/\/+$/, '');
+}
+
+function normalizeIssuer(value: string | undefined): string | undefined {
+  const raw = value?.trim();
+  if (!raw) return undefined;
+  const withScheme = /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
+  const url = new URL(withScheme);
+  url.pathname = url.pathname.replace(/\/+$/, '') + '/';
+  url.search = '';
+  url.hash = '';
+  return url.toString();
+}
+
+function buildOAuthJwtConfig(
+  env: NodeJS.ProcessEnv,
+  publicBaseUrl: string | undefined,
+  resourceIdentifier: string | undefined
+): OAuthJwtConfig | undefined {
+  const issuer = normalizeIssuer(env.OAUTH_ISSUER ?? env.AUTH0_ISSUER ?? env.AUTH0_DOMAIN);
+  const audience = env.OAUTH_AUDIENCE?.trim() || env.AUTH0_AUDIENCE?.trim() || resourceIdentifier;
+  const provider = env.OAUTH_PROVIDER?.trim() || (env.AUTH0_DOMAIN || env.AUTH0_ISSUER ? 'auth0' : 'generic_oidc');
+  const requiredScopes = parseCsv(env.OAUTH_REQUIRED_SCOPES ?? env.AUTH0_REQUIRED_SCOPES, ['mcp:read']);
+
+  if (!issuer || !audience || !resourceIdentifier || !publicBaseUrl) return undefined;
+
+  const jwksUrl = env.OAUTH_JWKS_URI?.trim() || new URL('.well-known/jwks.json', issuer).toString();
+
+  return {
+    provider,
+    issuer,
+    audience,
+    requiredScopes,
+    metadataUrl: `${publicBaseUrl}/.well-known/oauth-protected-resource`,
+    jwksUrl
+  };
+}
+
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   const host = env.HOST?.trim() || '127.0.0.1';
   const port = parsePort(env.PORT, 8787);
   const authMode = parseAuthMode(env.MCP_AUTH_MODE);
   const staticBearerToken = env.MCP_STATIC_BEARER_TOKEN?.trim() || undefined;
+  const publicBaseUrl = env.MCP_PUBLIC_BASE_URL?.trim()
+    ? trimTrailingSlash(env.MCP_PUBLIC_BASE_URL.trim())
+    : undefined;
+  const resourceIdentifier = env.MCP_RESOURCE_IDENTIFIER?.trim() || env.MCP_RESOURCE?.trim();
+  const oauthJwt = buildOAuthJwtConfig(env, publicBaseUrl, resourceIdentifier);
 
   if (authMode === 'static_bearer' && !staticBearerToken) {
     throw new Error('MCP_AUTH_MODE=static_bearer requires MCP_STATIC_BEARER_TOKEN');
+  }
+
+  if (authMode === 'oauth_jwt' && !oauthJwt) {
+    throw new Error(
+      'MCP_AUTH_MODE=oauth_jwt requires MCP_PUBLIC_BASE_URL, MCP_RESOURCE_IDENTIFIER, OAUTH_ISSUER, and OAUTH_AUDIENCE. AUTH0_DOMAIN/AUTH0_AUDIENCE may be used as compatibility inputs.'
+    );
   }
 
   if (host === '0.0.0.0') {
@@ -70,6 +140,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     port,
     authMode,
     staticBearerToken,
+    oauthJwt,
+    publicBaseUrl,
+    resourceIdentifier,
     allowedOrigins: parseOrigins(env.MCP_ALLOWED_ORIGINS),
     auditToStdout: parseBoolean(env.AUDIT_TO_STDOUT, true),
     timeoutMs: parsePositiveInt(env.TIMEOUT_MS, 3000, 'TIMEOUT_MS'),

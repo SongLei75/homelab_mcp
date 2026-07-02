@@ -25,6 +25,11 @@ export interface AuditEvent {
   origin?: string | null;
   authMode?: string;
   remoteAddr?: string | null;
+  oauthProvider?: string;
+  subject?: string;
+  scopes?: string[];
+  requiredScopes?: string[];
+  requiredScope?: string;
 }
 
 export class AuditLogger {

@@ -1,0 +1,16 @@
+[Unit]
+Description=OAuth protected MCP HTTP endpoint
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/project/private_mcp
+Environment=NODE_ENV=production
+EnvironmentFile=%h/.envs/homelab_mcp.env
+ExecStart=/usr/bin/env node %h/project/private_mcp/dist/index.js
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target
