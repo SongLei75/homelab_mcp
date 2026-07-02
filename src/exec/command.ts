@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { homedir, userInfo } from 'node:os';
 
 export interface CommandExecResult {
   stdout: string;
@@ -18,6 +19,40 @@ export interface CommandExecOptions {
   maxOutputBytes?: number;
 }
 
+const DEFAULT_PATH = '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin';
+
+function getCurrentUserFallbacks(): { username?: string; home?: string } {
+  try {
+    const info = userInfo();
+    return {
+      username: info.username || undefined,
+      home: info.homedir || undefined
+    };
+  } catch {
+    const home = homedir();
+    return {
+      home: home || undefined
+    };
+  }
+}
+
+function createCommandEnv(): NodeJS.ProcessEnv {
+  const fallback = getCurrentUserFallbacks();
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+    PATH: process.env.PATH || DEFAULT_PATH,
+    LANG: process.env.LANG || 'C.UTF-8',
+    LC_ALL: process.env.LC_ALL || process.env.LANG || 'C.UTF-8',
+    SHELL: process.env.SHELL || '/bin/bash'
+  };
+
+  env.HOME ||= fallback.home;
+  env.USER ||= fallback.username;
+  env.LOGNAME ||= env.USER || fallback.username;
+
+  return env;
+}
+
 export function execCommand(options: CommandExecOptions): Promise<CommandExecResult> {
   const timeoutMs = options.timeoutMs ?? 3000;
   const maxOutputBytes = options.maxOutputBytes ?? 16 * 1024;
@@ -28,11 +63,7 @@ export function execCommand(options: CommandExecOptions): Promise<CommandExecRes
       cwd: options.cwd,
       shell: false,
       stdio: ['ignore', 'pipe', 'pipe'],
-      env: {
-        PATH: process.env.PATH ?? '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin',
-        LANG: process.env.LANG ?? 'C.UTF-8',
-        LC_ALL: process.env.LC_ALL ?? 'C.UTF-8'
-      }
+      env: createCommandEnv()
     });
 
     let stdout = Buffer.alloc(0);
