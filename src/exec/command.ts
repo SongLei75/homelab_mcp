@@ -49,6 +49,7 @@ function createCommandEnv(): NodeJS.ProcessEnv {
   env.HOME ||= fallback.home;
   env.USER ||= fallback.username;
   env.LOGNAME ||= env.USER || fallback.username;
+  env.BASH_ENV ||= `${env.HOME}/.bashrc`;
 
   return env;
 }
@@ -59,7 +60,7 @@ export function execCommand(options: CommandExecOptions): Promise<CommandExecRes
   const startedAt = Date.now();
 
   return new Promise((resolve, reject) => {
-    const child = spawn('/bin/bash', ['-lc', options.command], {
+    const child = spawn('/bin/bash', ['-c', options.command], {
       cwd: options.cwd,
       shell: false,
       stdio: ['ignore', 'pipe', 'pipe'],
