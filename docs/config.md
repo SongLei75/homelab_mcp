@@ -33,6 +33,11 @@ OAUTH_REQUIRED_SCOPES=mcp:read,mcp:command,mcp:write
 `OAUTH_JWKS_URI` is optional. If omitted, the server derives it from
 `OAUTH_ISSUER` as `.well-known/jwks.json`.
 
+`offline_access` is advertised in protected-resource metadata so OAuth clients
+can request refresh tokens when the upstream authorization server allows it. Do
+not put `offline_access` in `OAUTH_REQUIRED_SCOPES`; it is not an MCP tool
+permission and should not be required on every MCP request.
+
 ## systemd EnvironmentFile
 
 `systemd` `EnvironmentFile=` is not a full shell `source`. Keep env files in
