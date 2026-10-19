@@ -2,8 +2,7 @@ import { randomUUID } from 'node:crypto';
 
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
-import type { McpServer } from '@modelcontextprotocol/server';
-import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/server';
+import { createMcpHandler } from '@modelcontextprotocol/server';
 
 import type { AppConfig } from '../config.js';
 import { AuditLogger } from '../audit/audit.js';
@@ -11,7 +10,12 @@ import { createAuthMiddleware } from '../auth/auth.js';
 import type { AuthContext } from '../auth/types.js';
 import { createOriginGuard } from './origin.js';
 import { createMcpServer } from '../mcp/server.js';
-import { createMcpTransport } from '../mcp/transport.js';
+import {
+  hashDebugValue,
+  runWithMcpRequestContext,
+  summarizeJsonRpcRequest,
+  type McpRequestContext
+} from '../observability/request-context.js';
 
 type HonoEnv = {
   Variables: {
@@ -20,41 +24,8 @@ type HonoEnv = {
   };
 };
 
-type McpHttpSession = {
-  id?: string;
-  server: McpServer;
-  transport: WebStandardStreamableHTTPServerTransport;
-  auth?: AuthContext;
-  createdAt: number;
-  lastSeenAt: number;
-};
-
-const DEFAULT_SESSION_TTL_MS = 30 * 60 * 1000;
 const challengeHeaderName = 'WWW-' + 'Authenticate';
 const requestAuthHeaderName = 'Author' + 'ization';
-
-function jsonRpcHttpError(status: number, code: number, message: string): Response {
-  return Response.json(
-    {
-      jsonrpc: '2.0',
-      error: { code, message },
-      id: null
-    },
-    { status, headers: { 'Content-Type': 'application/json' } }
-  );
-}
-
-async function isInitializeRequest(req: Request): Promise<boolean> {
-  if (req.method !== 'POST') return false;
-
-  try {
-    const body = await req.clone().json();
-    const messages = Array.isArray(body) ? body : [body];
-    return messages.some(message => message?.method === 'initialize');
-  } catch {
-    return false;
-  }
-}
 
 function protectedResourceMetadata(config: AppConfig) {
   return {
@@ -68,61 +39,6 @@ function protectedResourceMetadata(config: AppConfig) {
 
 export async function createApp(config: AppConfig) {
   const audit = new AuditLogger(config);
-  const sessions = new Map<string, McpHttpSession>();
-  const sessionTtlMs = config.sessionTtlMs ?? DEFAULT_SESSION_TTL_MS;
-
-  async function closeSession(session: McpHttpSession): Promise<void> {
-    if (session.id) sessions.delete(session.id);
-    await session.transport.close().catch(() => undefined);
-  }
-
-  async function createSession(auth?: AuthContext): Promise<McpHttpSession> {
-    const now = Date.now();
-    const session = {} as McpHttpSession;
-    const transport = createMcpTransport({
-      sessionIdGenerator: () => randomUUID(),
-      onsessioninitialized: sessionId => {
-        session.id = sessionId;
-        session.lastSeenAt = Date.now();
-        sessions.set(sessionId, session);
-      },
-      onsessionclosed: sessionId => {
-        if (sessionId) sessions.delete(sessionId);
-      }
-    });
-    const server = createMcpServer(audit, config, auth);
-
-    Object.assign(session, {
-      server,
-      transport,
-      auth,
-      createdAt: now,
-      lastSeenAt: now
-    });
-
-    await server.connect(transport);
-    return session;
-  }
-
-  function getSession(sessionId: string | null): McpHttpSession | undefined {
-    if (!sessionId) return undefined;
-    const session = sessions.get(sessionId);
-    if (session) session.lastSeenAt = Date.now();
-    return session;
-  }
-
-  function cleanupExpiredSessions(): void {
-    const now = Date.now();
-    for (const session of sessions.values()) {
-      if (now - session.lastSeenAt > sessionTtlMs) {
-        void closeSession(session);
-      }
-    }
-  }
-
-  const cleanupTimer = setInterval(cleanupExpiredSessions, Math.min(sessionTtlMs, 60_000));
-  cleanupTimer.unref?.();
-
   const app = new Hono<HonoEnv>();
 
   app.use('*', async (c, next) => {
@@ -142,11 +58,11 @@ export async function createApp(config: AppConfig) {
       allowHeaders: [
         'Content-Type',
         requestAuthHeaderName,
-        'mcp-session-id',
-        'Last-Event-ID',
-        'mcp-protocol-version'
+        'Mcp-Protocol-Version',
+        'Mcp-Method',
+        'Mcp-Name'
       ],
-      exposeHeaders: ['mcp-session-id', 'mcp-protocol-version', challengeHeaderName]
+      exposeHeaders: ['Mcp-Protocol-Version', challengeHeaderName]
     })
   );
 
@@ -158,8 +74,7 @@ export async function createApp(config: AppConfig) {
       authMode: config.authMode,
       endpoint: '/mcp',
       resource: config.resourceIdentifier,
-      sessions: sessions.size,
-      sessionTtlMs
+      protocolVersion: '2026-07-28'
     })
   );
 
@@ -170,32 +85,63 @@ export async function createApp(config: AppConfig) {
   app.use('/mcp', createAuthMiddleware(config, audit));
 
   app.all('/mcp', async c => {
-    cleanupExpiredSessions();
-
+    const startedAt = Date.now();
     const req = c.req.raw;
-    const sessionId = req.headers.get('mcp-session-id');
-    const existing = getSession(sessionId);
+    const summary = await summarizeJsonRpcRequest(req);
+    const context: McpRequestContext = {
+      requestId: c.get('requestId'),
+      openaiSessionHash: hashDebugValue(req.headers.get('x-openai-session')),
+      openaiSubjectHash: hashDebugValue(req.headers.get('x-openai-subject')),
+      rpcIds: summary.rpcIds,
+      rpcMethods: summary.rpcMethods,
+      bodyHash: summary.bodyHash,
+      bodyBytes: summary.bodyBytes,
+      cfRay: req.headers.get('cf-ray') ?? undefined,
+      traceparent: req.headers.get('traceparent') ?? undefined,
+      userAgent: req.headers.get('user-agent') ?? undefined
+    };
 
-    if (existing) {
-      return existing.transport.handleRequest(req);
+    const correlationFields = () => ({
+      openaiSessionHash: context.openaiSessionHash,
+      openaiSubjectHash: context.openaiSubjectHash,
+      rpcIds: context.rpcIds,
+      rpcMethods: context.rpcMethods,
+      bodyHash: context.bodyHash,
+      bodyBytes: context.bodyBytes,
+      cfRay: context.cfRay,
+      traceparent: context.traceparent,
+      userAgent: context.userAgent
+    });
+
+    await audit.write({
+      requestId: context.requestId,
+      event: 'mcp.http.request',
+      decision: 'info',
+      httpMethod: req.method,
+      ...correlationFields()
+    });
+
+    async function finish(response: Response): Promise<Response> {
+      await audit.write({
+        requestId: context.requestId,
+        event: 'mcp.http.response',
+        decision: response.status < 400 ? 'allow' : 'error',
+        httpMethod: req.method,
+        httpStatus: response.status,
+        durationMs: Date.now() - startedAt,
+        ...correlationFields()
+      });
+      return response;
     }
 
-    if (sessionId) {
-      return jsonRpcHttpError(404, -32001, 'Session not found');
-    }
-
-    if (!(await isInitializeRequest(req))) {
-      return jsonRpcHttpError(400, -32000, 'Bad Request: Mcp-Session-Id header is required');
-    }
-
-    const session = await createSession(c.get('auth'));
-    const response = await session.transport.handleRequest(req);
-
-    if (!session.id) {
-      await closeSession(session);
-    }
-
-    return response;
+    // New MCP protocol requests are isolated by the upstream stateless handler.
+    // Build the server per request so Auth0 scope-filtered tools never leak across users.
+    const handler = createMcpHandler(
+      () => createMcpServer(audit, config, c.get('auth')),
+      { legacy: 'reject' }
+    );
+    const response = await runWithMcpRequestContext(context, () => handler.fetch(req));
+    return finish(response);
   });
 
   return { app, audit };

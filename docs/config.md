@@ -55,3 +55,26 @@ The example user service reads `%h/.envs/homelab_mcp.env`.
 
 A user-service example is available at `examples/systemd/mcp-oauth.service`.
 An envfile example is available at `examples/env/mcp-oauth.env.example`.
+
+## MCP protocol and deployment paths
+
+Both entrypoints use @modelcontextprotocol/server 2.3.1 and the modern
+2026-07-28 protocol. The old 2025 initialize/session handshake is rejected.
+The SDK handles per-request isolation; no custom HTTP session map is used.
+
+- Cloudflare + Auth0: src/index.ts -> /mcp at 127.0.0.1:8787, with verified
+  JWT and per-tool scopes (mcp:read, mcp:write, mcp:command).
+- OpenAI Secure MCP Tunnel: src/stdio.ts -> serveStdio, with no HTTP OAuth.
+  The tunnel client launches dist/stdio.js; stdout is MCP-only.
+- Both entrypoints register the same five tools: read_logs, read_file,
+  write_file, apply_patch, and run_command.
+
+The gateway and tunnel are enabled as systemd user services. User lingering
+keeps them up without a desktop login. The command tool inherits the gateway
+process environment and invokes /bin/bash -lc, so the login shell adds user
+PATH configuration; environment values available only to an interactive shell
+are not automatically guaranteed.
+
+Run npm test, npm run build, and npm run test:local for protocol regression
+checks. The latter runs in-process HTTP and a real stdio child without an
+external OAuth bearer token.

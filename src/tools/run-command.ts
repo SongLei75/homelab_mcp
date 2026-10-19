@@ -7,6 +7,7 @@ import { AuditLogger } from '../audit/audit.js';
 import { checkToolCall } from '../policy/policy.js';
 import { execCommand } from '../exec/command.js';
 import type { AppConfig } from '../config.js';
+import { getMcpRequestContext } from '../observability/request-context.js';
 import { commandOutputSchema, toolMeta, toolResult } from './schema.js';
 
 export const runCommandInputSchema = z.object({
@@ -33,12 +34,28 @@ export function createRunCommandTool(audit: AuditLogger, config: AppConfig) {
       _meta: toolMeta()
     },
     handler: async (args: Record<string, unknown>): Promise<CallToolResult> => {
-      const requestId = randomUUID();
+      const context = getMcpRequestContext();
+      const requestId = context?.requestId ?? randomUUID();
+      const executionId = randomUUID();
+      const correlationFields = {
+        executionId,
+        mcpSessionId: context?.mcpSessionId,
+        openaiSessionHash: context?.openaiSessionHash,
+        openaiSubjectHash: context?.openaiSubjectHash,
+        rpcIds: context?.rpcIds,
+        rpcMethods: context?.rpcMethods,
+        bodyHash: context?.bodyHash,
+        bodyBytes: context?.bodyBytes,
+        cfRay: context?.cfRay,
+        traceparent: context?.traceparent,
+        userAgent: context?.userAgent
+      };
       const parsed = runCommandInputSchema.safeParse(args ?? {});
 
       if (!parsed.success) {
         await audit.write({
           requestId,
+          ...correlationFields,
           event: 'tool.policy',
           decision: 'deny',
           toolName: 'run_command',
@@ -58,6 +75,7 @@ export function createRunCommandTool(audit: AuditLogger, config: AppConfig) {
 
       await audit.write({
         requestId,
+        ...correlationFields,
         event: 'tool.policy',
         decision: policy.allow ? 'allow' : 'deny',
         toolName: 'run_command',
@@ -74,6 +92,7 @@ export function createRunCommandTool(audit: AuditLogger, config: AppConfig) {
 
       await audit.write({
         requestId,
+        ...correlationFields,
         event: 'tool.exec',
         decision: result.exitCode === 0 ? 'allow' : 'error',
         toolName: 'run_command',

@@ -1,6 +1,6 @@
 import 'dotenv/config';
 
-import { StdioServerTransport } from '@modelcontextprotocol/server';
+import { serveStdio } from '@modelcontextprotocol/server/stdio';
 
 import { AuditLogger } from './audit/audit.js';
 import { loadConfig } from './config.js';
@@ -18,9 +18,7 @@ const config = {
   authMode: 'off' as const
 };
 const audit = new AuditLogger(config);
-const server = createMcpServer(audit, config);
-const transport = new StdioServerTransport();
 
 console.error('mcp-local-gateway stdio transport starting');
 
-await server.connect(transport);
+serveStdio(() => createMcpServer(audit, config), { legacy: 'reject' });
