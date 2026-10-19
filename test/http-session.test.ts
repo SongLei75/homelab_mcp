@@ -86,7 +86,9 @@ describe('Modern HTTP MCP protocol', () => {
     expect(runCommand.annotations).toMatchObject({
       readOnlyHint: false, destructiveHint: true, openWorldHint: true
     });
-    expect(runCommand._meta.securitySchemes).toEqual([{ type: 'noauth' }]);
+    for (const tool of list.body.result.tools as any[]) {
+      expect(tool._meta.securitySchemes).toEqual([{ type: 'noauth' }]);
+    }
   });
 
   it('isolates two concurrent tools/call requests even with the same request ID', async () => {

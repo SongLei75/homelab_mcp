@@ -6,7 +6,7 @@ import * as z from 'zod/v4';
 
 import { AuditLogger } from '../audit/audit.js';
 import { execCommand } from '../exec/command.js';
-import { textOutputSchema, toolMeta, toolResult } from './schema.js';
+import { textOutputSchema, toolResult } from './schema.js';
 
 function truncateUtf8(text: string, maxBytes: number): string {
   const bytes = Buffer.from(text, 'utf8');
@@ -35,8 +35,7 @@ export function createReadLogsTool(audit: AuditLogger) {
         destructiveHint: false,
         idempotentHint: true,
         openWorldHint: true
-      },
-      _meta: toolMeta()
+      }
     },
     handler: async (args: Record<string, unknown>): Promise<CallToolResult> => {
       const requestId = randomUUID();

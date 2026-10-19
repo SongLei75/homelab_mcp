@@ -8,7 +8,7 @@ import * as z from 'zod/v4';
 
 import { AuditLogger } from '../audit/audit.js';
 import { execCommand } from '../exec/command.js';
-import { commandOutputSchema, toolMeta, toolResult } from './schema.js';
+import { commandOutputSchema, toolResult } from './schema.js';
 
 export const applyPatchInputSchema = z.object({
   cwd: z.string().optional(),
@@ -29,8 +29,7 @@ export function createApplyPatchTool(audit: AuditLogger) {
         destructiveHint: true,
         idempotentHint: false,
         openWorldHint: true
-      },
-      _meta: toolMeta()
+      }
     },
     handler: async (args: Record<string, unknown>): Promise<CallToolResult> => {
       const requestId = randomUUID();

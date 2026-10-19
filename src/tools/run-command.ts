@@ -8,7 +8,7 @@ import { checkToolCall } from '../policy/policy.js';
 import { execCommand } from '../exec/command.js';
 import type { AppConfig } from '../config.js';
 import { getMcpRequestContext } from '../observability/request-context.js';
-import { commandOutputSchema, toolMeta, toolResult } from './schema.js';
+import { commandOutputSchema, toolResult } from './schema.js';
 
 export const runCommandInputSchema = z.object({
   command: z.string().min(1),
@@ -30,8 +30,7 @@ export function createRunCommandTool(audit: AuditLogger, config: AppConfig) {
         destructiveHint: true,
         idempotentHint: false,
         openWorldHint: true
-      },
-      _meta: toolMeta()
+      }
     },
     handler: async (args: Record<string, unknown>): Promise<CallToolResult> => {
       const context = getMcpRequestContext();

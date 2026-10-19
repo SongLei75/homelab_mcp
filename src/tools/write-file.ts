@@ -6,7 +6,7 @@ import type { CallToolResult } from '@modelcontextprotocol/server';
 import * as z from 'zod/v4';
 
 import { AuditLogger } from '../audit/audit.js';
-import { okOutputSchema, toolMeta, toolResult } from './schema.js';
+import { okOutputSchema, toolResult } from './schema.js';
 
 export const writeFileInputSchema = z.object({
   path: z.string().min(1),
@@ -27,8 +27,7 @@ export function createWriteFileTool(audit: AuditLogger) {
         destructiveHint: true,
         idempotentHint: false,
         openWorldHint: true
-      },
-      _meta: toolMeta()
+      }
     },
     handler: async (args: Record<string, unknown>): Promise<CallToolResult> => {
       const requestId = randomUUID();

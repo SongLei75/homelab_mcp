@@ -6,6 +6,7 @@ import { createReadFileTool } from '../tools/read-file.js';
 import { createReadLogsTool } from '../tools/read-logs.js';
 import { createRunCommandTool } from '../tools/run-command.js';
 import { createWriteFileTool } from '../tools/write-file.js';
+import { toolSecuritySchemes } from '../tools/schema.js';
 import type { AppConfig } from '../config.js';
 import type { AuthContext } from '../auth/types.js';
 import { hasScope } from '../auth/types.js';
@@ -47,7 +48,12 @@ export function createMcpServer(audit: AuditLogger, config: AppConfig, auth?: Au
       continue;
     }
 
-    server.registerTool(tool.name, tool.definition, tool.handler);
+    const securitySchemes = toolSecuritySchemes(config.authMode, tool.requiredScope);
+    server.registerTool(tool.name, {
+      ...tool.definition,
+      // SDK 2.3.1 serializes OpenAI's securitySchemes compatibility extension in _meta.
+      _meta: securitySchemes ? { ...tool.definition._meta, securitySchemes } : tool.definition._meta
+    }, tool.handler);
   }
 
   return server;
