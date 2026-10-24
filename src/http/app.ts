@@ -138,7 +138,7 @@ export async function createApp(config: AppConfig) {
     // Build the server per request so Auth0 scope-filtered tools never leak across users.
     const handler = createMcpHandler(
       () => createMcpServer(audit, config, c.get('auth')),
-      { legacy: 'reject' }
+      { legacy: 'stateless' }
     );
     const response = await runWithMcpRequestContext(context, () => handler.fetch(req));
     return finish(response);

@@ -77,7 +77,7 @@ already installed. It will not create a second HTTP service.
 ## MCP protocol and deployment paths
 
 Both entrypoints use @modelcontextprotocol/server 2.3.1 and the modern
-2026-07-28 protocol. The old 2025 initialize/session handshake is rejected.
+2026-07-28 protocol. The HTTP entrypoint accepts 2025-era stateless MCP initialization for compatible clients; stdio remains modern-only.
 The SDK handles per-request isolation; no custom HTTP session map is used.
 
 - Cloudflare + Auth0: src/index.ts -> /mcp at 127.0.0.1:8787, with verified

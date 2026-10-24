@@ -155,20 +155,20 @@ describe('Modern HTTP MCP protocol', () => {
     expect(toolExec.executionId).toMatch(/^[a-f0-9-]{36}$/);
   });
 
-  it('rejects the legacy initialization handshake', async () => {
+  it('supports the legacy initialization handshake', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'mcp-modern-rejection-'));
     const { app } = await createApp(testConfig(join(dir, 'audit.jsonl')));
     const response = await app.request('/mcp', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Mcp-Protocol-Version': '2025-06-18' },
+      headers: { Accept: 'application/json, text/event-stream', 'Content-Type': 'application/json', 'Mcp-Protocol-Version': '2025-06-18' },
       body: JSON.stringify({
         jsonrpc: '2.0', id: 1, method: 'initialize',
         params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'old', version: '1' } }
       })
     });
-    expect(response.status).toBe(400);
-    const body = await response.json() as any;
-    expect(body.error.data.supported).toEqual(['2026-07-28']);
+    expect(response.status).toBe(200);
+    const body = await response.text();
+    expect(body).toContain('2025-06-18');
   });
 
   it('uses configured allowed origins for CORS responses', async () => {
