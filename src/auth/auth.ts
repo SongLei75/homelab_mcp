@@ -47,7 +47,7 @@ export function createAuthMiddleware(config: AppConfig, audit: AuditLogger): Mid
           reason: 'missing or invalid bearer token',
           authMode: config.authMode
         });
-        return c.json({ error: 'unauthorized' }, 401, { [challengeHeaderName]: 'Bearer realm="mcp-local-gateway"' });
+        return c.json({ error: 'unauthorized' }, 401, { [challengeHeaderName]: 'Bearer realm="private-mcp"' });
       }
 
       await next();

@@ -69,7 +69,7 @@ export async function createApp(config: AppConfig) {
   app.get('/healthz', c =>
     c.json({
       status: 'ok',
-      name: 'mcp-local-gateway',
+      name: 'private-mcp',
       version: '0.1.0',
       authMode: config.authMode,
       endpoint: '/mcp',

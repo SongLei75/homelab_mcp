@@ -1,5 +1,5 @@
 [Unit]
-Description=OAuth protected MCP HTTP endpoint
+Description=Homelab public OAuth MCP HTTP endpoint
 After=network-online.target
 Wants=network-online.target
 
@@ -11,6 +11,8 @@ EnvironmentFile=%h/.envs/homelab_mcp.env
 ExecStart=/usr/bin/env node %h/project/private_mcp/dist/index.js
 Restart=on-failure
 RestartSec=3
+# Shell commands started by the MCP must survive a gateway restart.
+KillMode=process
 
 [Install]
 WantedBy=default.target

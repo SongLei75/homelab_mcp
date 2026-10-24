@@ -24,8 +24,8 @@ describe('per-tool security metadata', () => {
   });
 
   it.each([
-    { grantedScopes: ['mcp:read', 'mcp:write', 'mcp:command'], expectedTools: 5 },
-    { grantedScopes: ['mcp:read'], expectedTools: 2 }
+    { grantedScopes: ['mcp:read', 'mcp:write', 'mcp:command'], expectedTools: 7 },
+    { grantedScopes: ['mcp:read'], expectedTools: 3 }
   ])('serializes the actual OAuth tool scopes with $expectedTools allowed tools', async ({ grantedScopes, expectedTools }) => {
     const config: AppConfig = {
       host: '127.0.0.1',
@@ -78,8 +78,21 @@ describe('per-tool security metadata', () => {
         read_logs: 'mcp:read',
         run_command: 'mcp:command',
         write_file: 'mcp:write',
-        apply_patch: 'mcp:write'
+        apply_patch: 'mcp:write',
+        send_file: 'mcp:write',
+        recv_file: 'mcp:read'
       };
+      const sendFile = listed.find(tool => tool.name === 'send_file');
+      if (sendFile) {
+        expect(sendFile._meta['openai/fileParams']).toEqual(['file']);
+        expect(sendFile.inputSchema.properties.file).toMatchObject({
+          type: 'object',
+          required: expect.arrayContaining(['download_url', 'file_id'])
+        });
+        expect(Object.keys(sendFile.inputSchema.properties.file.properties)).toEqual(
+          expect.arrayContaining(['download_url', 'file_id', 'mime_type', 'file_name'])
+        );
+      }
       for (const tool of listed) {
         expect(tool._meta.securitySchemes).toEqual([
           { type: 'oauth2', scopes: [scopeByTool[tool.name]] }

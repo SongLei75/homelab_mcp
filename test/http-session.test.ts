@@ -57,7 +57,7 @@ async function rpc(
 }
 
 describe('Modern HTTP MCP protocol', () => {
-  it('supports server/discover and lists exactly five tools without a session', async () => {
+  it('supports server/discover and lists exactly seven tools without a session', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'mcp-modern-discover-'));
     const { app } = await createApp(testConfig(join(dir, 'audit.jsonl')));
 
@@ -66,12 +66,19 @@ describe('Modern HTTP MCP protocol', () => {
     expect(discover.body.result.supportedVersions).toEqual(['2026-07-28']);
     expect(discover.headers.get('mcp-session-id')).toBeNull();
 
+    const health = await app.request('/healthz');
+    expect(health.status).toBe(200);
+    expect(await health.json()).toMatchObject({ name: 'private-mcp' });
+
     const list = await rpc(app, 2, 'tools/list');
     expect(list.status).toBe(200);
     expect((list.body.result.tools as any[]).map(tool => tool.name)).toEqual([
-      'read_logs', 'read_file', 'write_file', 'apply_patch', 'run_command'
+      'read_logs', 'read_file', 'write_file', 'apply_patch', 'run_command', 'send_file', 'recv_file'
     ]);
 
+    const sendFile = list.body.result.tools.find((tool: any) => tool.name === 'send_file');
+    expect(sendFile._meta['openai/fileParams']).toEqual(['file']);
+    expect(sendFile._meta.securitySchemes).toEqual([{ type: 'noauth' }]);
     const runCommand = list.body.result.tools.find((tool: any) => tool.name === 'run_command');
     expect(runCommand.outputSchema).toMatchObject({
       type: 'object',

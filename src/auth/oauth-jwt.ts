@@ -35,7 +35,7 @@ function authContext(payload: JWTPayload): AuthContext {
 
 export function bearerChallenge(config: AppConfig): string {
   const oauth = config.oauthJwt;
-  const parts = ['realm="mcp-local-gateway"'];
+  const parts = ['realm="private-mcp"'];
   if (oauth?.metadataUrl) parts.push(`resource_metadata="${oauth.metadataUrl}"`);
   if (oauth?.requiredScopes.length) parts.push(`scope="${oauth.requiredScopes.join(' ')}"`);
   return `Bearer ${parts.join(', ')}`;

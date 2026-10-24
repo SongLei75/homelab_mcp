@@ -52,10 +52,10 @@ describe('read_logs', () => {
     });
 
     const tool = createReadLogsTool(audit);
-    await tool.handler({ source: 'journalctl', user: true, unit: 'mcp-local-gateway', lines: 5, maxOutputBytes: 100 });
+    await tool.handler({ source: 'journalctl', user: true, unit: 'homelab_mcp', lines: 5, maxOutputBytes: 100 });
 
     expect(execCommandMock).toHaveBeenCalledWith({
-      command: 'journalctl --user -u "mcp-local-gateway" -n 5 --no-pager',
+      command: 'journalctl --user -u "homelab_mcp" -n 5 --no-pager',
       maxOutputBytes: 100
     });
   });

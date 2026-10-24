@@ -53,8 +53,26 @@ set +a
 
 The example user service reads `%h/.envs/homelab_mcp.env`.
 
-A user-service example is available at `examples/systemd/mcp-oauth.service`.
-An envfile example is available at `examples/env/mcp-oauth.env.example`.
+A user-service example is available at `examples/systemd/homelab_mcp.service`.
+An envfile example is available at `examples/env/homelab_mcp.env.example`.
+
+## Runtime naming and service management
+
+- `private_mcp` is the Git repository and source directory.
+- `private-mcp` is the npm package and MCP server identity.
+- `homelab_mcp.service` is the **only** local HTTP MCP systemd service.
+  It loads `%h/.envs/homelab_mcp.env` and runs `dist/index.js`.
+- `openai-tunnel-client.service` is the OpenAI Tunnel service. It loads
+  `%h/.config/homelab-mcp/openai-tunnel.env` and starts `dist/stdio.js`
+  through its `homelab-stdio` profile.
+- `cloudflared.service` is the shared Cloudflare Tunnel, configured in the
+  separate `~/project/infra` Terraform repository. It routes
+  `https://mcp.songlei.me/mcp` to HTTP port 8787.
+
+Use `npm run http:status`, `npm run http:logs`, `npm run tunnel:status`,
+and `npm run tunnel:logs` to inspect the active services. The HTTP installer
+uses the existing `homelab_mcp.service` and preserves its unit file if it is
+already installed. It will not create a second HTTP service.
 
 ## MCP protocol and deployment paths
 
@@ -66,8 +84,15 @@ The SDK handles per-request isolation; no custom HTTP session map is used.
   JWT and per-tool scopes (mcp:read, mcp:write, mcp:command).
 - OpenAI Secure MCP Tunnel: src/stdio.ts -> serveStdio, with no HTTP OAuth.
   The tunnel client launches dist/stdio.js; stdout is MCP-only.
-- Both entrypoints register the same five tools: read_logs, read_file,
-  write_file, apply_patch, and run_command.
+- Both entrypoints register the same seven tools: read_logs, read_file,
+  write_file, apply_patch, run_command, send_file, and recv_file.
+  Existing five tools are unchanged. send_file requires mcp:write and uses
+  OpenAI `openai/fileParams` with download_url/file_id (optional mime_type,
+  file_name). It downloads only from approved OpenAI HTTPS hosts, streams at
+  most 50 MiB, checks optional SHA-256, and does not overwrite by default.
+  recv_file requires mcp:read and returns a base64-encoded embedded MCP
+  resource, limited to 2 MiB. It does not automatically save to ChatGPT Library
+  and does not require an additional public file endpoint.
 
 The gateway and tunnel are enabled as systemd user services. User lingering
 keeps them up without a desktop login. The command tool inherits the gateway

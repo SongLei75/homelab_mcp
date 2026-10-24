@@ -8,7 +8,7 @@ import { createApp } from './http/app.js';
 const config = loadConfig();
 const { app } = await createApp(config);
 
-console.log(`mcp-local-gateway listening on http://${config.host}:${config.port}`);
+console.log(`private-mcp listening on http://${config.host}:${config.port}`);
 console.log(`health: http://${config.host}:${config.port}/healthz`);
 console.log(`mcp:    http://${config.host}:${config.port}/mcp`);
 console.log(`auth:   ${config.authMode}`);

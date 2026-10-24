@@ -19,6 +19,6 @@ const config = {
 };
 const audit = new AuditLogger(config);
 
-console.error('mcp-local-gateway stdio transport starting');
+console.error('private-mcp stdio transport starting');
 
 serveStdio(() => createMcpServer(audit, config), { legacy: 'reject' });

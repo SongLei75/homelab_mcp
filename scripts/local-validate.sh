@@ -71,10 +71,15 @@ async function stdioSmoke() {
           assert.equal(result.jsonrpc, '2.0');
           if (result.id === 1) {
             assert.deepEqual(result.result.supportedVersions, ['2026-07-28']);
-            child.stdin.write(JSON.stringify(message(2, 'tools/call', {
+            child.stdin.write(JSON.stringify(message(2, 'tools/list')) + '\n');
+          } else if (result.id === 2) {
+            assert.deepEqual(result.result.tools.map(tool => tool.name), [
+              'read_logs', 'read_file', 'write_file', 'apply_patch', 'run_command', 'send_file', 'recv_file'
+            ]);
+            child.stdin.write(JSON.stringify(message(3, 'tools/call', {
               name: 'run_command', arguments: { command: 'printf stdio-ok' }
             })) + '\n');
-          } else if (result.id === 2) {
+          } else if (result.id === 3) {
             assert.equal(result.result.structuredContent.stdout, 'stdio-ok');
             completed = true;
             child.stdin.end();
@@ -115,8 +120,9 @@ try {
 
   const listed = await rpc(2, 'tools/list');
   assert.deepEqual(listed.tools.map(tool => tool.name), [
-    'read_logs', 'read_file', 'write_file', 'apply_patch', 'run_command'
+    'read_logs', 'read_file', 'write_file', 'apply_patch', 'run_command', 'send_file', 'recv_file'
   ]);
+  assert.deepEqual(listed.tools.find(tool => tool.name === 'send_file')._meta['openai/fileParams'], ['file']);
 
   async function call(id, name, args) {
     return rpc(id, 'tools/call', { name, arguments: args });
@@ -137,8 +143,12 @@ try {
   assert.equal(a.structuredContent.stdout, 'A');
   assert.equal(b.structuredContent.stdout, 'B');
 
+  const received = await call(8, 'recv_file', { path: file });
+  const resource = received.content.find(item => item.type === 'resource');
+  assert.equal(Buffer.from(resource.resource.blob, 'base64').toString('utf8'), 'after\n');
+
   await stdioSmoke();
-  console.log('OK: modern discover, five HTTP tools, concurrent isolation, and stdio protocol');
+  console.log('OK: modern discover, seven HTTP and stdio tools, binary resource, concurrent isolation');
 } finally {
   await rm(tmp, { recursive: true, force: true });
 }
