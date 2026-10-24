@@ -55,7 +55,7 @@ function parseAuthMode(value: string | undefined): AuthMode {
 }
 
 function parseOrigins(value: string | undefined): string[] {
-  const raw = value ?? 'http://127.0.0.1:8787,http://localhost:8787,https://chatgpt.com';
+  const raw = value ?? 'http://127.0.0.1:8787,http://localhost:8787,https://chatgpt.com,https://gemini.google.com';
   return raw
     .split(',')
     .map(item => item.trim())
