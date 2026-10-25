@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { writeFile } from 'node:fs/promises';
+import { unlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -35,43 +35,47 @@ export function createApplyPatchTool(audit: AuditLogger) {
       const requestId = randomUUID();
       const parsed = applyPatchInputSchema.parse(args ?? {});
       const patchPath = join(tmpdir(), `patch-${requestId}.diff`);
-      await writeFile(patchPath, parsed.patch.endsWith('\n') ? parsed.patch : `${parsed.patch}\n`, 'utf8');
-      const strip = parsed.strip ?? 1;
-      const command = `patch -p${strip} < ${JSON.stringify(patchPath)}`;
-      const result = await execCommand({
-        command,
-        cwd: parsed.cwd
-      });
-      await audit.write({
-        requestId,
-        event: 'tool.exec',
-        decision: result.exitCode === 0 ? 'allow' : 'error',
-        toolName: 'apply_patch',
-        tool: 'apply_patch',
-        args: parsed,
-        cwd: parsed.cwd,
-        command,
-        durationMs: result.durationMs,
-        exitCode: result.exitCode,
-        timedOut: result.timedOut,
-        stdoutTruncated: result.stdoutTruncated,
-        stderrTruncated: result.stderrTruncated
-      });
-      return {
-        ...toolResult({
+      try {
+        await writeFile(patchPath, parsed.patch.endsWith('\n') ? parsed.patch : `${parsed.patch}\n`, 'utf8');
+        const strip = parsed.strip ?? 1;
+        const command = `patch -p${strip} < ${JSON.stringify(patchPath)}`;
+        const result = await execCommand({
           command,
+          cwd: parsed.cwd
+        });
+        await audit.write({
+          requestId,
+          event: 'tool.exec',
+          decision: result.exitCode === 0 ? 'allow' : 'error',
+          toolName: 'apply_patch',
+          tool: 'apply_patch',
+          args: parsed,
           cwd: parsed.cwd,
-          stdout: result.stdout,
-          stderr: result.stderr,
-          exitCode: result.exitCode,
-          signal: result.signal,
+          command,
           durationMs: result.durationMs,
+          exitCode: result.exitCode,
           timedOut: result.timedOut,
           stdoutTruncated: result.stdoutTruncated,
           stderrTruncated: result.stderrTruncated
-        }, result.stdout || result.stderr || 'ok'),
-        isError: result.exitCode !== 0,
-      };
+        });
+        return {
+          ...toolResult({
+            command,
+            cwd: parsed.cwd,
+            stdout: result.stdout,
+            stderr: result.stderr,
+            exitCode: result.exitCode,
+            signal: result.signal,
+            durationMs: result.durationMs,
+            timedOut: result.timedOut,
+            stdoutTruncated: result.stdoutTruncated,
+            stderrTruncated: result.stderrTruncated
+          }, result.stdout || result.stderr || 'ok'),
+          isError: result.exitCode !== 0,
+        };
+      } finally {
+        await unlink(patchPath).catch(() => undefined);
+      }
     }
   };
 }

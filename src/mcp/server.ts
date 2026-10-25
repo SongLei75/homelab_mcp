@@ -23,6 +23,7 @@ type ToolRegistration = {
 export function createMcpServer(audit: AuditLogger, config: AppConfig, auth?: AuthContext): McpServer {
   const server = new McpServer({
     name: 'private-mcp',
+    title: '我的电脑',
     version: '0.1.0'
   });
 

@@ -32,8 +32,7 @@ function protectedResourceMetadata(config: AppConfig) {
     resource: config.resourceIdentifier ?? config.oauthJwt?.audience,
     authorization_servers: config.oauthJwt ? [config.oauthJwt.issuer] : [],
     scopes_supported: ['mcp:read', 'mcp:command', 'mcp:write', 'offline_access'],
-    bearer_methods_supported: ['header'],
-    resource_documentation: config.publicBaseUrl ? `${config.publicBaseUrl}/mcp` : undefined
+    bearer_methods_supported: ['header']
   };
 }
 
