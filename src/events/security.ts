@@ -3,6 +3,7 @@ import { request as httpRequest } from 'node:http';
 import { request as httpsRequest } from 'node:https';
 import dns from 'node:dns/promises';
 import net from 'node:net';
+import type { CollabConfig } from '../config.js';
 
 const WHSEC_PREFIX = 'whsec_';
 
@@ -68,7 +69,54 @@ function isPrivateOrReservedIp(ip: string): boolean {
   return true;
 }
 
-export async function assertSafeWebhookUrl(rawUrl: string): Promise<URL> {
+type SsrfPolicy = Pick<CollabConfig,
+  'webhookSsrfEnabled' | 'webhookSsrfAllowedHostnames' | 'webhookSsrfAllowedIpRanges'>;
+
+function matchesHostname(hostname: string, names: string[]): boolean {
+  return names.some(pattern => {
+    const p = pattern.toLowerCase();
+    return p.startsWith('*.') ? hostname.endsWith(p.slice(1)) && hostname !== p.slice(2) : hostname === p;
+  });
+}
+
+function isAllowedException(hostname: string, ip: string, policy?: SsrfPolicy): boolean {
+  if (!policy?.webhookSsrfAllowedHostnames?.length || !policy.webhookSsrfAllowedIpRanges?.length || !matchesHostname(hostname, policy.webhookSsrfAllowedHostnames)) {
+    return false;
+  }
+  const family = net.isIP(ip);
+  if (!family) return false;
+  const block = new net.BlockList();
+  for (const entry of policy.webhookSsrfAllowedIpRanges) {
+    const [base, prefix] = entry.split('/');
+    const version = net.isIP(base);
+    if (!version || !/^(0|[1-9]\d*)$/.test(prefix ?? '') || Number(prefix) > (version === 4 ? 32 : 128)) {
+      throw new Error('Invalid webhook SSRF allowed CIDR.');
+    }
+    block.addSubnet(base, Number(prefix), version === 4 ? 'ipv4' : 'ipv6');
+  }
+  return block.check(ip, family === 4 ? 'ipv4' : 'ipv6');
+}
+
+function isForbiddenMetadata(hostname: string, ip?: string): boolean {
+  if (hostname === 'metadata.google.internal' || hostname === 'metadata.azure.internal') return true;
+  if (!ip) return false;
+  if (net.isIP(ip) === 4) {
+    const [a, b] = ip.split('.').map(Number);
+    return (a === 169 && b === 254) || ip === '100.100.100.200';
+  }
+  return net.isIP(ip) === 6 && /^fe[89ab]/i.test(ip);
+}
+
+function checkDestination(hostname: string, ip: string, policy?: SsrfPolicy): void {
+  // Cloud metadata and link-local endpoints remain blocked even with an exception.
+  if (isForbiddenMetadata(hostname, ip)) throw new Error('Forbidden metadata or link-local webhook destination.');
+  if (policy?.webhookSsrfEnabled === false) return;
+  if (isPrivateOrReservedIp(ip) && !isAllowedException(hostname, ip, policy)) {
+    throw new Error('Webhook hostname resolves to a forbidden private or reserved IP.');
+  }
+}
+
+export async function assertSafeWebhookUrl(rawUrl: string, policy?: SsrfPolicy): Promise<URL> {
   let parsed: URL;
   try {
     parsed = new URL(rawUrl);
@@ -83,44 +131,25 @@ export async function assertSafeWebhookUrl(rawUrl: string): Promise<URL> {
   if (!allowLoopbackForTest && parsed.protocol !== 'https:') {
     throw new Error('Webhook delivery URL must use HTTPS.');
   }
-
   if (parsed.username || parsed.password) {
     throw new Error('Webhook delivery URL must not contain credentials.');
   }
-
-  if (allowLoopbackForTest) {
-    return parsed;
-  }
+  if (allowLoopbackForTest) return parsed;
 
   const hostname = parsed.hostname.replace(/^\[|\]$/g, '').toLowerCase();
-  if (
-    hostname === 'localhost' ||
-    hostname.endsWith('.localhost') ||
-    hostname.endsWith('.local') ||
-    hostname.endsWith('.internal') ||
-    hostname === 'metadata.google.internal'
-  ) {
-    throw new Error('Forbidden webhook hostname.');
-  }
-
-  if (net.isIP(hostname)) {
-    if (isPrivateOrReservedIp(hostname)) {
-      throw new Error('Webhook URL resolves to a private or reserved IP address.');
-    }
-    return parsed;
-  }
-
-  const records = await dns.lookup(hostname, { all: true, verbatim: true });
-  if (!records || records.length === 0) {
-    throw new Error('Unable to resolve webhook hostname.');
-  }
-
-  for (const record of records) {
-    if (isPrivateOrReservedIp(record.address)) {
-      throw new Error('Webhook hostname resolves to a forbidden private or reserved IP.');
+  if (isForbiddenMetadata(hostname)) throw new Error('Forbidden metadata webhook hostname.');
+  if (policy?.webhookSsrfEnabled !== false) {
+    const localName = hostname === 'localhost' || hostname.endsWith('.localhost') ||
+      hostname.endsWith('.local') || hostname.endsWith('.internal');
+    if (localName && !matchesHostname(hostname, policy?.webhookSsrfAllowedHostnames ?? [])) {
+      throw new Error('Forbidden webhook hostname.');
     }
   }
-
+  const records = net.isIP(hostname)
+    ? [{ address: hostname }]
+    : await dns.lookup(hostname, { all: true, verbatim: true });
+  if (!records.length) throw new Error('Unable to resolve webhook hostname.');
+  for (const record of records) checkDestination(hostname, record.address, policy);
   return parsed;
 }
 
@@ -129,9 +158,10 @@ export async function postWebhook(
   rawUrl: string,
   headers: Record<string, string>,
   body: string,
-  timeoutMs: number
+  timeoutMs: number,
+  policy?: SsrfPolicy
 ): Promise<{ status: number; ok: boolean; body: string; contentType: string }> {
-  const url = await assertSafeWebhookUrl(rawUrl);
+  const url = await assertSafeWebhookUrl(rawUrl, policy);
   const hostname = url.hostname.replace(/^\[|\]$/g, '');
   const isTestLoopback = process.env.PRIVATE_MCP_TEST_ALLOW_LOOPBACK === '1' &&
     (hostname === '127.0.0.1' || hostname === 'localhost');
@@ -141,9 +171,8 @@ export async function postWebhook(
   const resolved = isTestLoopback ? [{ address: '127.0.0.1', family: 4 }] :
     net.isIP(hostname) ? [{ address: hostname, family: net.isIP(hostname) }] :
     await dns.lookup(hostname, { all: true, verbatim: true });
-  if (!resolved.length || resolved.some(ip => !isTestLoopback && isPrivateOrReservedIp(ip.address))) {
-    throw new Error('Forbidden webhook destination address');
-  }
+  if (!resolved.length) throw new Error('Unable to resolve webhook destination.');
+  if (!isTestLoopback) for (const record of resolved) checkDestination(hostname.toLowerCase(), record.address, policy);
   // The socket connects to the vetted IP. SNI/certificate verification use the original domain.
   const address = resolved[0].address;
   const requestImpl = url.protocol === 'https:' ? httpsRequest : httpRequest;

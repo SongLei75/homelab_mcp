@@ -103,3 +103,31 @@ are not automatically guaranteed.
 Run npm test, npm run build, and npm run test:local for protocol regression
 checks. The latter runs in-process HTTP and a real stdio child without an
 external OAuth bearer token.
+
+## Webhook SSRF policy
+
+Outgoing MCP Events webhook requests are HTTPS-only and reject private, reserved,
+link-local and metadata destinations by default. Redirects are not followed;
+HTTPS certificate validation, response limits and socket-level address checks
+remain enabled regardless of the SSRF policy.
+
+Optional environment variables (apply to both HTTP and stdio entrypoints):
+
+```env
+WEBHOOK_SSRF_ENABLED=true
+WEBHOOK_SSRF_ALLOWED_HOSTNAMES=connectors.api.openai.com
+WEBHOOK_SSRF_ALLOWED_IP_RANGES=198.18.0.0/15
+```
+
+The last two settings must **both** match a webhook destination before the
+otherwise-blocked IP is permitted. Domains may be comma-separated exact names
+or anchored subdomain patterns such as `*.example.com`; CIDRs may be IPv4 or
+IPv6. Defaults: SSRF filtering enabled, with no exceptions. When enabled,
+setting only one half of an exception is an invalid configuration.
+
+This example is useful with Clash/OpenClash Fake-IP: it permits only the
+specified HTTPS callback hostname when it resolves inside the local Fake-IP
+range, without changing system or router DNS and without granting unrestricted
+access to that network range. Cloud metadata and link-local addresses are
+blocked even under an exception. To explicitly disable IP-based SSRF checks,
+set `WEBHOOK_SSRF_ENABLED=false` (not recommended for shared deployments).

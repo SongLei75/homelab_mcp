@@ -1,4 +1,5 @@
 import { homedir } from 'node:os';
+import net from 'node:net';
 import { dirname, join } from 'node:path';
 
 export type AuthMode = 'off' | 'static_bearer' | 'oauth_placeholder' | 'oauth_jwt';
@@ -23,6 +24,9 @@ export interface CollabConfig {
   webhookTimeoutMs: number;
   webhookMaxAttempts: number;
   dispatcherIntervalMs: number;
+  webhookSsrfEnabled: boolean;
+  webhookSsrfAllowedHostnames: string[];
+  webhookSsrfAllowedIpRanges: string[];
 }
 
 export interface AppConfig {
@@ -57,7 +61,10 @@ export function resolveCollabConfig(config: AppConfig): CollabConfig {
     maxSubscriptionTtlMs: config.collab?.maxSubscriptionTtlMs ?? 30 * 24 * 60 * 60 * 1000,
     webhookTimeoutMs: config.collab?.webhookTimeoutMs ?? 5000,
     webhookMaxAttempts: config.collab?.webhookMaxAttempts ?? 6,
-    dispatcherIntervalMs: config.collab?.dispatcherIntervalMs ?? 2000
+    dispatcherIntervalMs: config.collab?.dispatcherIntervalMs ?? 2000,
+    webhookSsrfEnabled: config.collab?.webhookSsrfEnabled ?? true,
+    webhookSsrfAllowedHostnames: config.collab?.webhookSsrfAllowedHostnames ?? [],
+    webhookSsrfAllowedIpRanges: config.collab?.webhookSsrfAllowedIpRanges ?? []
   };
 }
 
@@ -145,6 +152,29 @@ function buildOAuthJwtConfig(
   };
 }
 
+function parseSsrfHostnames(input: string | undefined): string[] {
+  return parseCsv(input, []).map(raw => {
+    const hostname = raw.toLowerCase().replace(/\.$/, '');
+    const domain = hostname.startsWith('*.') ? hostname.slice(2) : hostname;
+    if (!domain || !domain.split('.').every(label => /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/.test(label))) {
+      throw new Error(`Invalid WEBHOOK_SSRF_ALLOWED_HOSTNAMES entry: ${raw}`);
+    }
+    return hostname;
+  });
+}
+
+function parseSsrfCidrs(input: string | undefined): string[] {
+  return parseCsv(input, []).map(value => {
+    const [ip, prefix, extra] = value.split('/');
+    const family = net.isIP(ip);
+    const bits = family === 4 ? 32 : family === 6 ? 128 : 0;
+    if (extra !== undefined || !bits || !/^(0|[1-9]\d*)$/.test(prefix ?? '') || Number(prefix) > bits) {
+      throw new Error(`Invalid WEBHOOK_SSRF_ALLOWED_IP_RANGES entry: ${value}`);
+    }
+    return value;
+  });
+}
+
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   const host = env.HOST?.trim() || '127.0.0.1';
   const port = parsePort(env.PORT, 8787);
@@ -170,6 +200,13 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     throw new Error('Refusing to bind 0.0.0.0. Use HOST=127.0.0.1 and expose through a tunnel.');
   }
 
+  const webhookSsrfEnabled = parseBoolean(env.WEBHOOK_SSRF_ENABLED, true);
+  const webhookSsrfAllowedHostnames = parseSsrfHostnames(env.WEBHOOK_SSRF_ALLOWED_HOSTNAMES);
+  const webhookSsrfAllowedIpRanges = parseSsrfCidrs(env.WEBHOOK_SSRF_ALLOWED_IP_RANGES);
+  if (webhookSsrfEnabled && (webhookSsrfAllowedHostnames.length > 0) !== (webhookSsrfAllowedIpRanges.length > 0)) {
+    throw new Error('WEBHOOK_SSRF_ALLOWED_HOSTNAMES and WEBHOOK_SSRF_ALLOWED_IP_RANGES must both be set for exceptions.');
+  }
+
   const dbPath = env.PRIVATE_MCP_EVENTS_DB?.trim() || join(homedir(), '.local', 'share', 'private_mcp', 'events.db');
 
   return {
@@ -190,7 +227,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
       dbPath,
       webhookTimeoutMs: parsePositiveInt(env.WEBHOOK_TIMEOUT_MS, 5000, 'WEBHOOK_TIMEOUT_MS'),
       webhookMaxAttempts: parsePositiveInt(env.WEBHOOK_MAX_ATTEMPTS, 6, 'WEBHOOK_MAX_ATTEMPTS'),
-      dispatcherIntervalMs: parsePositiveInt(env.WEBHOOK_DISPATCH_INTERVAL_MS, 2000, 'WEBHOOK_DISPATCH_INTERVAL_MS')
+      dispatcherIntervalMs: parsePositiveInt(env.WEBHOOK_DISPATCH_INTERVAL_MS, 2000, 'WEBHOOK_DISPATCH_INTERVAL_MS'),
+      webhookSsrfEnabled,
+      webhookSsrfAllowedHostnames,
+      webhookSsrfAllowedIpRanges
     }
   };
 }

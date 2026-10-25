@@ -136,7 +136,7 @@ export class EventsRpcHandler {
             );
           }
 
-          const parsedUrl = await assertSafeWebhookUrl(delivery.url);
+          const parsedUrl = await assertSafeWebhookUrl(delivery.url, this.collabConfig);
           const normalizedUrl = parsedUrl.toString();
           decodeWebhookSecret(delivery.secret);
 

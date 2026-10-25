@@ -44,7 +44,7 @@ export class WebhookDispatcher {
     secret: string,
     subscriptionId: string
   ): Promise<void> {
-    await assertSafeWebhookUrl(targetUrl);
+    await assertSafeWebhookUrl(targetUrl, this.config);
 
     const challengeToken = `chl_${randomUUID().replace(/-/g, '')}`;
     const webhookId = `msg_challenge_${randomUUID().replace(/-/g, '')}`;
@@ -67,7 +67,7 @@ export class WebhookDispatcher {
       'webhook-timestamp': String(timestampSeconds),
       'webhook-signature': signature,
       'X-MCP-Subscription-Id': subscriptionId
-    }, body, this.config.webhookTimeoutMs);
+    }, body, this.config.webhookTimeoutMs, this.config);
 
     if (!response.ok) {
       throw new Error(
@@ -106,7 +106,7 @@ export class WebhookDispatcher {
   private async deliverSingle(item: DueDeliveryRecord): Promise<void> {
     const nextAttempt = item.attempt_count + 1;
     try {
-      await assertSafeWebhookUrl(item.target_url);
+      await assertSafeWebhookUrl(item.target_url, this.config);
 
       const timestampSeconds = Math.floor(Date.now() / 1000);
       const envelope = JSON.stringify({
@@ -130,7 +130,7 @@ export class WebhookDispatcher {
         'webhook-timestamp': String(timestampSeconds),
         'webhook-signature': signature,
         'X-MCP-Subscription-Id': item.subscription_id
-      }, envelope, this.config.webhookTimeoutMs);
+      }, envelope, this.config.webhookTimeoutMs, this.config);
 
       if (response.status >= 200 && response.status < 300) {
         this.store.markDelivered(item.delivery_id, response.status);
