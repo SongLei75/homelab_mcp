@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto';
 import http from 'node:http';
 import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -198,7 +199,7 @@ describe('Collab Message & Events Center MVP (Tests A-D)', () => {
     await new Promise<void>(resolve => webhookServer.listen(0, '127.0.0.1', resolve));
     const address = webhookServer.address() as { port: number };
     const callbackUrl = `http://127.0.0.1:${address.port}/webhook`;
-    const secret = 'whsec_dGVzdF9zZWNyZXRfa2V5X2F0X2xlYXN0XzE2X2J5dGVz';
+    const secret = `whsec_${randomBytes(32).toString('base64')}`;
 
     try {
       const instance1 = await createApp(cfg);
