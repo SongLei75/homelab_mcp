@@ -1,8 +1,10 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { createHash } from 'node:crypto';
+import type { AuthContext } from '../auth/types.js';
 
 export interface McpRequestContext {
   requestId: string;
+  auth?: AuthContext;
   mcpSessionId?: string;
   openaiSessionHash?: string;
   openaiSubjectHash?: string;

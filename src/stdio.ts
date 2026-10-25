@@ -4,6 +4,7 @@ import { serveStdio } from '@modelcontextprotocol/server/stdio';
 
 import { AuditLogger } from './audit/audit.js';
 import { loadConfig } from './config.js';
+import { createMcpRuntime } from './mcp/runtime.js';
 import { createMcpServer } from './mcp/server.js';
 
 // The stdio transport is the local/OpenAI-tunnel management channel.
@@ -18,7 +19,11 @@ const config = {
   authMode: 'off' as const
 };
 const audit = new AuditLogger(config);
-
+const runtime = await createMcpRuntime(config, 'stdio');
 console.error('private-mcp stdio transport starting');
 
-serveStdio(() => createMcpServer(audit, config), { legacy: 'reject' });
+serveStdio(() => {
+  const server = createMcpServer(audit, config, undefined, runtime);
+  runtime.setResourceNotifier(uri => { void server.server.sendResourceUpdated({ uri }).catch(() => {}); });
+  return server;
+}, { legacy: 'reject' });

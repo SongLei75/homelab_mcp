@@ -1,3 +1,6 @@
+import { homedir } from 'node:os';
+import { dirname, join } from 'node:path';
+
 export type AuthMode = 'off' | 'static_bearer' | 'oauth_placeholder' | 'oauth_jwt';
 
 export interface OAuthJwtConfig {
@@ -7,6 +10,19 @@ export interface OAuthJwtConfig {
   requiredScopes: string[];
   metadataUrl: string;
   jwksUrl: string;
+}
+
+export interface CollabConfig {
+  dbPath: string;
+  maxChannelNameLength: number;
+  maxMessageContentBytes: number;
+  defaultReadLimit: number;
+  maxReadLimit: number;
+  defaultSubscriptionTtlMs: number;
+  maxSubscriptionTtlMs: number;
+  webhookTimeoutMs: number;
+  webhookMaxAttempts: number;
+  dispatcherIntervalMs: number;
 }
 
 export interface AppConfig {
@@ -23,6 +39,26 @@ export interface AppConfig {
   maxOutputBytes: number;
   auditLogFile: string;
   auditMaxBytes: number;
+  collab?: Partial<CollabConfig>;
+}
+
+export function resolveCollabConfig(config: AppConfig): CollabConfig {
+  const defaultDbPath = config.auditLogFile.includes('/tmp/homelab-mcp/')
+    ? join(homedir(), '.local', 'share', 'private_mcp', 'events.db')
+    : join(dirname(config.auditLogFile), 'events.db');
+
+  return {
+    dbPath: config.collab?.dbPath ?? defaultDbPath,
+    maxChannelNameLength: config.collab?.maxChannelNameLength ?? 64,
+    maxMessageContentBytes: config.collab?.maxMessageContentBytes ?? 32 * 1024,
+    defaultReadLimit: config.collab?.defaultReadLimit ?? 50,
+    maxReadLimit: config.collab?.maxReadLimit ?? 200,
+    defaultSubscriptionTtlMs: config.collab?.defaultSubscriptionTtlMs ?? 7 * 24 * 60 * 60 * 1000,
+    maxSubscriptionTtlMs: config.collab?.maxSubscriptionTtlMs ?? 30 * 24 * 60 * 60 * 1000,
+    webhookTimeoutMs: config.collab?.webhookTimeoutMs ?? 5000,
+    webhookMaxAttempts: config.collab?.webhookMaxAttempts ?? 6,
+    dispatcherIntervalMs: config.collab?.dispatcherIntervalMs ?? 2000
+  };
 }
 
 function parsePort(value: string | undefined, fallback: number): number {
@@ -134,6 +170,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     throw new Error('Refusing to bind 0.0.0.0. Use HOST=127.0.0.1 and expose through a tunnel.');
   }
 
+  const dbPath = env.PRIVATE_MCP_EVENTS_DB?.trim() || join(homedir(), '.local', 'share', 'private_mcp', 'events.db');
+
   return {
     host,
     port,
@@ -147,6 +185,12 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     timeoutMs: parsePositiveInt(env.TIMEOUT_MS, 3000, 'TIMEOUT_MS'),
     maxOutputBytes: parsePositiveInt(env.MAX_OUTPUT_BYTES, 16 * 1024, 'MAX_OUTPUT_BYTES'),
     auditLogFile: env.AUDIT_LOG_FILE?.trim() || '/tmp/homelab-mcp/audit.jsonl',
-    auditMaxBytes: parsePositiveInt(env.AUDIT_MAX_BYTES, 300 * 1024 * 1024, 'AUDIT_MAX_BYTES')
+    auditMaxBytes: parsePositiveInt(env.AUDIT_MAX_BYTES, 300 * 1024 * 1024, 'AUDIT_MAX_BYTES'),
+    collab: {
+      dbPath,
+      webhookTimeoutMs: parsePositiveInt(env.WEBHOOK_TIMEOUT_MS, 5000, 'WEBHOOK_TIMEOUT_MS'),
+      webhookMaxAttempts: parsePositiveInt(env.WEBHOOK_MAX_ATTEMPTS, 6, 'WEBHOOK_MAX_ATTEMPTS'),
+      dispatcherIntervalMs: parsePositiveInt(env.WEBHOOK_DISPATCH_INTERVAL_MS, 2000, 'WEBHOOK_DISPATCH_INTERVAL_MS')
+    }
   };
 }

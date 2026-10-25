@@ -14,6 +14,7 @@ import { createApp } from './dist/http/app.js';
 import { loadConfig } from './dist/config.js';
 
 const tmp = await mkdtemp(join(tmpdir(), 'mcp-modern-validate-'));
+let closeApp;
 const meta = {
   'io.modelcontextprotocol/protocolVersion': '2026-07-28',
   'io.modelcontextprotocol/clientInfo': { name: 'local-validate', version: '1' },
@@ -36,7 +37,8 @@ function headers(method, name) {
 
 async function stdioSmoke() {
   const child = spawn(process.execPath, ['dist/stdio.js'], {
-    stdio: ['pipe', 'pipe', 'pipe']
+    stdio: ['pipe', 'pipe', 'pipe'],
+    env: { ...process.env, PRIVATE_MCP_EVENTS_DB: join(tmp, 'stdio-events.db') }
   });
   let buffer = '';
   let stderr = '';
@@ -74,7 +76,7 @@ async function stdioSmoke() {
             child.stdin.write(JSON.stringify(message(2, 'tools/list')) + '\n');
           } else if (result.id === 2) {
             assert.deepEqual(result.result.tools.map(tool => tool.name), [
-              'read_logs', 'read_file', 'write_file', 'apply_patch', 'run_command', 'send_file', 'recv_file'
+              'read_logs', 'read_file', 'write_file', 'apply_patch', 'run_command', 'send_file', 'recv_file', 'message_publish', 'message_read'
             ]);
             child.stdin.write(JSON.stringify(message(3, 'tools/call', {
               name: 'run_command', arguments: { command: 'printf stdio-ok' }
@@ -100,9 +102,11 @@ try {
     ...loadConfig({ ...process.env, MCP_AUTH_MODE: 'off' }),
     authMode: 'off',
     auditToStdout: false,
-    auditLogFile: join(tmp, 'audit.jsonl')
+    auditLogFile: join(tmp, 'audit.jsonl'),
+    collab: { dbPath: join(tmp, 'http-events.db') }
   };
-  const { app } = await createApp(config);
+  const { app, close } = await createApp(config);
+  closeApp = close;
 
   async function rpc(id, method, params = {}) {
     const response = await app.request('/mcp', {
@@ -120,7 +124,7 @@ try {
 
   const listed = await rpc(2, 'tools/list');
   assert.deepEqual(listed.tools.map(tool => tool.name), [
-    'read_logs', 'read_file', 'write_file', 'apply_patch', 'run_command', 'send_file', 'recv_file'
+    'read_logs', 'read_file', 'write_file', 'apply_patch', 'run_command', 'send_file', 'recv_file', 'message_publish', 'message_read'
   ]);
   assert.deepEqual(listed.tools.find(tool => tool.name === 'send_file')._meta['openai/fileParams'], ['file']);
 
@@ -148,8 +152,9 @@ try {
   assert.equal(Buffer.from(resource.resource.blob, 'base64').toString('utf8'), 'after\n');
 
   await stdioSmoke();
-  console.log('OK: modern discover, seven HTTP and stdio tools, binary resource, concurrent isolation');
+  console.log('OK: modern discover, nine HTTP and stdio tools, binary resource, concurrent isolation');
 } finally {
+  closeApp?.();
   await rm(tmp, { recursive: true, force: true });
 }
 NODE

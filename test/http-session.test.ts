@@ -57,134 +57,163 @@ async function rpc(
 }
 
 describe('Modern HTTP MCP protocol', () => {
-  it('supports server/discover and lists exactly seven tools without a session', async () => {
+  it('supports server/discover and lists tools without a session', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'mcp-modern-discover-'));
-    const { app } = await createApp(testConfig(join(dir, 'audit.jsonl')));
+    const { app, close } = await createApp(testConfig(join(dir, 'audit.jsonl')));
 
-    const discover = await rpc(app, 1, 'server/discover');
-    expect(discover.status).toBe(200);
-    expect(discover.body.result.supportedVersions).toEqual(['2026-07-28']);
-    expect(discover.headers.get('mcp-session-id')).toBeNull();
+    try {
+      const discover = await rpc(app, 1, 'server/discover');
+      expect(discover.status).toBe(200);
+      expect(discover.body.result.supportedVersions).toEqual(['2026-07-28']);
+      expect(discover.body.result.capabilities.events).toEqual({});
+      expect(discover.headers.get('mcp-session-id')).toBeNull();
 
-    const health = await app.request('/healthz');
-    expect(health.status).toBe(200);
-    expect(await health.json()).toMatchObject({ name: 'private-mcp' });
+      const health = await app.request('/healthz');
+      expect(health.status).toBe(200);
+      expect(await health.json()).toMatchObject({ name: 'private-mcp' });
 
-    const list = await rpc(app, 2, 'tools/list');
-    expect(list.status).toBe(200);
-    expect((list.body.result.tools as any[]).map(tool => tool.name)).toEqual([
-      'read_logs', 'read_file', 'write_file', 'apply_patch', 'run_command', 'send_file', 'recv_file'
-    ]);
+      const list = await rpc(app, 2, 'tools/list');
+      expect(list.status).toBe(200);
+      expect((list.body.result.tools as any[]).map(tool => tool.name)).toEqual([
+        'read_logs',
+        'read_file',
+        'write_file',
+        'apply_patch',
+        'run_command',
+        'send_file',
+        'recv_file',
+        'message_publish',
+        'message_read'
+      ]);
 
-    const sendFile = list.body.result.tools.find((tool: any) => tool.name === 'send_file');
-    expect(sendFile._meta['openai/fileParams']).toEqual(['file']);
-    expect(sendFile._meta.securitySchemes).toEqual([{ type: 'noauth' }]);
-    const runCommand = list.body.result.tools.find((tool: any) => tool.name === 'run_command');
-    expect(runCommand.outputSchema).toMatchObject({
-      type: 'object',
-      properties: {
-        stdout: { type: 'string' },
-        exitCode: { anyOf: expect.arrayContaining([
-          expect.objectContaining({ type: 'integer' }),
-          expect.objectContaining({ type: 'null' })
-        ]) }
+      const sendFile = list.body.result.tools.find((tool: any) => tool.name === 'send_file');
+      expect(sendFile._meta['openai/fileParams']).toEqual(['file']);
+      expect(sendFile._meta.securitySchemes).toEqual([{ type: 'noauth' }]);
+      const runCommand = list.body.result.tools.find((tool: any) => tool.name === 'run_command');
+      expect(runCommand.outputSchema).toMatchObject({
+        type: 'object',
+        properties: {
+          stdout: { type: 'string' },
+          exitCode: { anyOf: expect.arrayContaining([
+            expect.objectContaining({ type: 'integer' }),
+            expect.objectContaining({ type: 'null' })
+          ]) }
+        }
+      });
+      expect(runCommand.annotations).toMatchObject({
+        readOnlyHint: false, destructiveHint: true, openWorldHint: true
+      });
+      for (const tool of list.body.result.tools as any[]) {
+        expect(tool._meta.securitySchemes).toEqual([{ type: 'noauth' }]);
       }
-    });
-    expect(runCommand.annotations).toMatchObject({
-      readOnlyHint: false, destructiveHint: true, openWorldHint: true
-    });
-    for (const tool of list.body.result.tools as any[]) {
-      expect(tool._meta.securitySchemes).toEqual([{ type: 'noauth' }]);
+    } finally {
+      close();
     }
   });
 
   it('isolates two concurrent tools/call requests even with the same request ID', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'mcp-modern-concurrency-'));
-    const { app } = await createApp(testConfig(join(dir, 'audit.jsonl')));
+    const { app, close } = await createApp(testConfig(join(dir, 'audit.jsonl')));
 
-    const [a, b] = await Promise.all([
-      rpc(app, 7, 'tools/call', {
-        name: 'run_command',
-        arguments: { command: 'sleep 0.2; printf isolated-A', timeoutMs: 3000 }
-      }),
-      rpc(app, 7, 'tools/call', {
-        name: 'run_command',
-        arguments: { command: 'sleep 0.1; printf isolated-B', timeoutMs: 3000 }
-      })
-    ]);
+    try {
+      const [a, b] = await Promise.all([
+        rpc(app, 7, 'tools/call', {
+          name: 'run_command',
+          arguments: { command: 'sleep 0.2; printf isolated-A', timeoutMs: 3000 }
+        }),
+        rpc(app, 7, 'tools/call', {
+          name: 'run_command',
+          arguments: { command: 'sleep 0.1; printf isolated-B', timeoutMs: 3000 }
+        })
+      ]);
 
-    expect(a.status).toBe(200);
-    expect(b.status).toBe(200);
-    expect(a.body.result.structuredContent.stdout).toBe('isolated-A');
-    expect(b.body.result.structuredContent.stdout).toBe('isolated-B');
-    expect(a.headers.get('mcp-session-id')).toBeNull();
+      expect(a.status).toBe(200);
+      expect(b.status).toBe(200);
+      expect(a.body.result.structuredContent.stdout).toBe('isolated-A');
+      expect(b.body.result.structuredContent.stdout).toBe('isolated-B');
+      expect(a.headers.get('mcp-session-id')).toBeNull();
+    } finally {
+      close();
+    }
   });
 
   it('preserves request correlation with tool execution without logging OpenAI identity headers', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'mcp-modern-correlation-'));
     const auditLogFile = join(dir, 'audit.jsonl');
-    const { app } = await createApp(testConfig(auditLogFile));
+    const { app, close } = await createApp(testConfig(auditLogFile));
     const openAiSession = 'debug-openai-session-value';
 
-    const result = await rpc(app, 9, 'tools/call', {
-      name: 'run_command',
-      arguments: { command: 'printf correlation-ok', timeoutMs: 3000 }
-    }, {
-      'X-OpenAI-Session': openAiSession,
-      'X-OpenAI-Subject': 'debug-openai-subject-value',
-      'Cf-Ray': 'debug-ray'
-    });
-    expect(result.status).toBe(200);
-    expect(result.body.result.structuredContent.stdout).toBe('correlation-ok');
+    try {
+      const result = await rpc(app, 9, 'tools/call', {
+        name: 'run_command',
+        arguments: { command: 'printf correlation-ok', timeoutMs: 3000 }
+      }, {
+        'X-OpenAI-Session': openAiSession,
+        'X-OpenAI-Subject': 'debug-openai-subject-value',
+        'Cf-Ray': 'debug-ray'
+      });
+      expect(result.status).toBe(200);
+      expect(result.body.result.structuredContent.stdout).toBe('correlation-ok');
 
-    const events = (await readFile(auditLogFile, 'utf8')).trim().split('\n').map(line => JSON.parse(line));
-    const httpRequest = events.find((event: any) =>
-      event.event === 'mcp.http.request' && event.rpcMethods?.includes('tools/call')
-    );
-    const toolExec = events.find((event: any) =>
-      event.event === 'tool.exec' && event.toolName === 'run_command'
-    );
+      const events = (await readFile(auditLogFile, 'utf8')).trim().split('\n').map(line => JSON.parse(line));
+      const httpRequest = events.find((event: any) =>
+        event.event === 'mcp.http.request' && event.rpcMethods?.includes('tools/call')
+      );
+      const toolExec = events.find((event: any) =>
+        event.event === 'tool.exec' && event.toolName === 'run_command'
+      );
 
-    expect(httpRequest).toMatchObject({
-      rpcIds: ['number:9'], rpcMethods: ['tools/call'], cfRay: 'debug-ray'
-    });
-    expect(httpRequest.openaiSessionHash).toMatch(/^[a-f0-9]{16}$/);
-    expect(httpRequest.openaiSubjectHash).toMatch(/^[a-f0-9]{16}$/);
-    expect(JSON.stringify(httpRequest)).not.toContain(openAiSession);
-    expect(toolExec.requestId).toBe(httpRequest.requestId);
-    expect(toolExec.executionId).toMatch(/^[a-f0-9-]{36}$/);
+      expect(httpRequest).toMatchObject({
+        rpcIds: ['number:9'], rpcMethods: ['tools/call'], cfRay: 'debug-ray'
+      });
+      expect(httpRequest.openaiSessionHash).toMatch(/^[a-f0-9]{16}$/);
+      expect(httpRequest.openaiSubjectHash).toMatch(/^[a-f0-9]{16}$/);
+      expect(JSON.stringify(httpRequest)).not.toContain(openAiSession);
+      expect(toolExec.requestId).toBe(httpRequest.requestId);
+      expect(toolExec.executionId).toMatch(/^[a-f0-9-]{36}$/);
+    } finally {
+      close();
+    }
   });
 
   it('supports the legacy initialization handshake', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'mcp-modern-rejection-'));
-    const { app } = await createApp(testConfig(join(dir, 'audit.jsonl')));
-    const response = await app.request('/mcp', {
-      method: 'POST',
-      headers: { Accept: 'application/json, text/event-stream', 'Content-Type': 'application/json', 'Mcp-Protocol-Version': '2025-06-18' },
-      body: JSON.stringify({
-        jsonrpc: '2.0', id: 1, method: 'initialize',
-        params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'old', version: '1' } }
-      })
-    });
-    expect(response.status).toBe(200);
-    const body = await response.text();
-    expect(body).toContain('2025-06-18');
+    const { app, close } = await createApp(testConfig(join(dir, 'audit.jsonl')));
+    try {
+      const response = await app.request('/mcp', {
+        method: 'POST',
+        headers: { Accept: 'application/json, text/event-stream', 'Content-Type': 'application/json', 'Mcp-Protocol-Version': '2025-06-18' },
+        body: JSON.stringify({
+          jsonrpc: '2.0', id: 1, method: 'initialize',
+          params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'old', version: '1' } }
+        })
+      });
+      expect(response.status).toBe(200);
+      const body = await response.text();
+      expect(body).toContain('2025-06-18');
+    } finally {
+      close();
+    }
   });
 
   it('uses configured allowed origins for CORS responses', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'mcp-modern-cors-'));
-    const { app } = await createApp(testConfig(join(dir, 'audit.jsonl'), ['https://chatgpt.com']));
+    const { app, close } = await createApp(testConfig(join(dir, 'audit.jsonl'), ['https://chatgpt.com']));
 
-    const allowed = await app.request('/mcp', {
-      method: 'OPTIONS',
-      headers: { Origin: 'https://chatgpt.com', 'Access-Control-Request-Method': 'POST' }
-    });
-    expect(allowed.headers.get('access-control-allow-origin')).toBe('https://chatgpt.com');
+    try {
+      const allowed = await app.request('/mcp', {
+        method: 'OPTIONS',
+        headers: { Origin: 'https://chatgpt.com', 'Access-Control-Request-Method': 'POST' }
+      });
+      expect(allowed.headers.get('access-control-allow-origin')).toBe('https://chatgpt.com');
 
-    const denied = await app.request('/mcp', {
-      method: 'OPTIONS',
-      headers: { Origin: 'https://example.com', 'Access-Control-Request-Method': 'POST' }
-    });
-    expect(denied.headers.get('access-control-allow-origin')).toBeNull();
+      const denied = await app.request('/mcp', {
+        method: 'OPTIONS',
+        headers: { Origin: 'https://example.com', 'Access-Control-Request-Method': 'POST' }
+      });
+      expect(denied.headers.get('access-control-allow-origin')).toBeNull();
+    } finally {
+      close();
+    }
   });
 });

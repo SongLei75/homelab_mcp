@@ -2,15 +2,17 @@ import { randomUUID } from 'node:crypto';
 
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
-import { createMcpHandler } from '@modelcontextprotocol/server';
+import { createMcpHandler, InMemoryServerEventBus } from '@modelcontextprotocol/server';
 
 import type { AppConfig } from '../config.js';
 import { AuditLogger } from '../audit/audit.js';
 import { createAuthMiddleware } from '../auth/auth.js';
 import type { AuthContext } from '../auth/types.js';
 import { createOriginGuard } from './origin.js';
+import { createMcpRuntime } from '../mcp/runtime.js';
 import { createMcpServer } from '../mcp/server.js';
 import {
+  getMcpRequestContext,
   hashDebugValue,
   runWithMcpRequestContext,
   summarizeJsonRpcRequest,
@@ -39,6 +41,15 @@ function protectedResourceMetadata(config: AppConfig) {
 export async function createApp(config: AppConfig) {
   const audit = new AuditLogger(config);
   const app = new Hono<HonoEnv>();
+
+  const runtime = await createMcpRuntime(config, 'http');
+  // A shared event bus delivers core resource notifications across HTTP requests.
+  const eventBus = new InMemoryServerEventBus();
+  const handler = createMcpHandler(
+    () => createMcpServer(audit, config, getMcpRequestContext()?.auth, runtime),
+    { legacy: 'stateless', bus: eventBus }
+  );
+  runtime.setResourceNotifier(uri => handler.notify.resourceUpdated(uri));
 
   app.use('*', async (c, next) => {
     c.set('requestId', randomUUID());
@@ -86,9 +97,11 @@ export async function createApp(config: AppConfig) {
   app.all('/mcp', async c => {
     const startedAt = Date.now();
     const req = c.req.raw;
+    const auth = c.get('auth');
     const summary = await summarizeJsonRpcRequest(req);
     const context: McpRequestContext = {
       requestId: c.get('requestId'),
+      auth,
       openaiSessionHash: hashDebugValue(req.headers.get('x-openai-session')),
       openaiSubjectHash: hashDebugValue(req.headers.get('x-openai-subject')),
       rpcIds: summary.rpcIds,
@@ -133,15 +146,23 @@ export async function createApp(config: AppConfig) {
       return response;
     }
 
-    // New MCP protocol requests are isolated by the upstream stateless handler.
-    // Build the server per request so Auth0 scope-filtered tools never leak across users.
-    const handler = createMcpHandler(
-      () => createMcpServer(audit, config, c.get('auth')),
-      { legacy: 'stateless' }
-    );
     const response = await runWithMcpRequestContext(context, () => handler.fetch(req));
+
+    if (response.headers.get('content-type')?.includes('text/event-stream')) {
+      const headers = new Headers(response.headers);
+      headers.set('Cache-Control', 'no-cache, no-transform');
+      headers.set('X-Accel-Buffering', 'no');
+      return finish(
+        new Response(response.body, {
+          status: response.status,
+          headers
+        })
+      );
+    }
+
     return finish(response);
   });
 
-  return { app, audit };
+  const close = () => runtime.close();
+  return { app, audit, close, dispatcher: runtime.dispatcher, messageStore: runtime.messageStore, subscriptionStore: runtime.subscriptionStore };
 }
