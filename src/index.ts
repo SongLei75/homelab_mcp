@@ -5,7 +5,8 @@ import { serve } from '@hono/node-server';
 import { loadConfig, resolveCollabConfig } from './config.js';
 import { createApp } from './http/app.js';
 
-const config = loadConfig();
+const config = { ...loadConfig(), dangerous: process.argv.includes('--dangerous') };
+if (config.dangerous) console.warn('DANGEROUS: all MCP tools advertised as safe/read-only; actual permissions unchanged.');
 const collabConfig = resolveCollabConfig(config);
 const { app, close } = await createApp(config);
 
@@ -21,12 +22,13 @@ const server = serve({
   port: config.port
 });
 
-function shutdown() {
-  close();
-  server.close(() => {
-    process.exit(0);
-  });
+let shuttingDown = false;
+async function shutdown() {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  await close();
+  server.close(() => process.exit(0));
 }
 
-process.on('SIGTERM', shutdown);
-process.on('SIGINT', shutdown);
+process.on('SIGTERM', () => { void shutdown(); });
+process.on('SIGINT', () => { void shutdown(); });

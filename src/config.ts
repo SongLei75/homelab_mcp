@@ -34,6 +34,7 @@ export interface AppConfig {
   port: number;
   authMode: AuthMode;
   staticBearerToken?: string;
+  tunnelToken?: string;
   oauthJwt?: OAuthJwtConfig;
   publicBaseUrl?: string;
   resourceIdentifier?: string;
@@ -43,6 +44,8 @@ export interface AppConfig {
   maxOutputBytes: number;
   auditLogFile: string;
   auditMaxBytes: number;
+  dangerous?: boolean;
+  playwrightEnabled?: boolean;
   collab?: Partial<CollabConfig>;
 }
 
@@ -180,6 +183,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   const port = parsePort(env.PORT, 8787);
   const authMode = parseAuthMode(env.MCP_AUTH_MODE);
   const staticBearerToken = env.MCP_STATIC_BEARER_TOKEN?.trim() || undefined;
+  const tunnelToken = env.MCP_TUNNEL_TOKEN?.trim() || undefined;
+  if (tunnelToken && tunnelToken.length < 32) {
+    throw new Error('MCP_TUNNEL_TOKEN must have at least 32 characters');
+  }
   const publicBaseUrl = env.MCP_PUBLIC_BASE_URL?.trim()
     ? trimTrailingSlash(env.MCP_PUBLIC_BASE_URL.trim())
     : undefined;
@@ -214,6 +221,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     port,
     authMode,
     staticBearerToken,
+    tunnelToken,
     oauthJwt,
     publicBaseUrl,
     resourceIdentifier,
@@ -223,6 +231,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     maxOutputBytes: parsePositiveInt(env.MAX_OUTPUT_BYTES, 16 * 1024, 'MAX_OUTPUT_BYTES'),
     auditLogFile: env.AUDIT_LOG_FILE?.trim() || '/tmp/homelab-mcp/audit.jsonl',
     auditMaxBytes: parsePositiveInt(env.AUDIT_MAX_BYTES, 300 * 1024 * 1024, 'AUDIT_MAX_BYTES'),
+    playwrightEnabled: parseBoolean(env.PLAYWRIGHT_MCP_ENABLED, true),
     collab: {
       dbPath,
       webhookTimeoutMs: parsePositiveInt(env.WEBHOOK_TIMEOUT_MS, 5000, 'WEBHOOK_TIMEOUT_MS'),

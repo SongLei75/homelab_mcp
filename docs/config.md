@@ -62,9 +62,10 @@ An envfile example is available at `examples/env/homelab_mcp.env.example`.
 - `private-mcp` is the npm package and MCP server identity.
 - `homelab_mcp.service` is the **only** local HTTP MCP systemd service.
   It loads `%h/.envs/homelab_mcp.env` and runs `dist/index.js`.
-- `openai-tunnel-client.service` is the OpenAI Tunnel service. It loads
-  `%h/.config/homelab-mcp/openai-tunnel.env` and starts `dist/stdio.js`
-  through its `homelab-stdio` profile.
+- `openai-tunnel-client.service` connects to the **same HTTP backend** via
+  `http://127.0.0.1:8787/mcp` using the `homelab-http` tunnel profile.
+  It loads both its existing control-plane environment and
+  `%h/.envs/homelab_mcp.env` for `MCP_TUNNEL_TOKEN`.
 - `cloudflared.service` is the shared Cloudflare Tunnel, configured in the
   separate `~/project/infra` Terraform repository. It routes
   `https://mcp.songlei.me/mcp` to HTTP port 8787.
@@ -76,15 +77,19 @@ already installed. It will not create a second HTTP service.
 
 ## MCP protocol and deployment paths
 
-Both entrypoints use @modelcontextprotocol/server 2.3.1 and the modern
-2026-07-28 protocol. The HTTP entrypoint accepts 2025-era stateless MCP initialization for compatible clients; stdio remains modern-only.
+Both routes use one `@modelcontextprotocol/server` HTTP runtime (2.3.1) and
+the modern 2026-07-28 protocol. It also accepts 2025-era stateless MCP initialization.
 The SDK handles per-request isolation; no custom HTTP session map is used.
 
 - Cloudflare + Auth0: src/index.ts -> /mcp at 127.0.0.1:8787, with verified
   JWT and per-tool scopes (mcp:read, mcp:write, mcp:command).
-- OpenAI Secure MCP Tunnel: src/stdio.ts -> serveStdio, with no HTTP OAuth.
-  The tunnel client launches dist/stdio.js; stdout is MCP-only.
-- Both entrypoints register the same seven tools: read_logs, read_file,
+- OpenAI Secure MCP Tunnel: local HTTP requests to that **same**
+  `src/index.ts` process. Its `X-MCP-Tunnel-Token` is verified separately
+  from public Auth0 JWTs, never by trusting a loopback source address.
+  Put the single high-entropy `MCP_TUNNEL_TOKEN` in
+  `%h/.envs/homelab_mcp.env`; the tunnel profile uses `env:MCP_TUNNEL_TOKEN`
+  for both runtime and discovery/probe headers.
+- Both connections use the same seven core tools: read_logs, read_file,
   write_file, apply_patch, run_command, send_file, and recv_file.
   Existing five tools are unchanged. send_file requires mcp:write and uses
   OpenAI `openai/fileParams` with download_url/file_id (optional mime_type,
@@ -101,8 +106,18 @@ PATH configuration; environment values available only to an interactive shell
 are not automatically guaranteed.
 
 Run npm test, npm run build, and npm run test:local for protocol regression
-checks. The latter runs in-process HTTP and a real stdio child without an
+checks. The latter checks the HTTP backend in-process without an
 external OAuth bearer token.
+
+## Dangerous compatibility mode
+
+Run `npm run start -- --dangerous` to advertise all MCP tools,
+including dynamically discovered Playwright tools, with `readOnlyHint: true`,
+`destructiveHint: false`, `idempotentHint: true`, and `openWorldHint: false`.
+Without the flag, real annotations are retained. This changes advertised
+metadata only: actual tool capabilities, OAuth scopes and server-side policy
+remain unchanged. Clients may ignore these hints, or auto-approve dangerous
+commands. Do not enable this mode for untrusted agents or endpoints.
 
 ## Webhook SSRF policy
 
@@ -111,7 +126,7 @@ link-local and metadata destinations by default. Redirects are not followed;
 HTTPS certificate validation, response limits and socket-level address checks
 remain enabled regardless of the SSRF policy.
 
-Optional environment variables (apply to both HTTP and stdio entrypoints):
+Optional environment variables (apply to the shared HTTP backend):
 
 ```env
 WEBHOOK_SSRF_ENABLED=true
@@ -131,3 +146,44 @@ range, without changing system or router DNS and without granting unrestricted
 access to that network range. Cloud metadata and link-local addresses are
 blocked even under an exception. To explicitly disable IP-based SSRF checks,
 set `WEBHOOK_SSRF_ENABLED=false` (not recommended for shared deployments).
+
+## Playwright browser tools
+
+At gateway startup, the native tools from the pinned `@playwright/mcp` are discovered
+and exposed with their original tool names, descriptions, and schemas. Each tool
+has one additional optional `browserType` field (default: `chrome`):
+
+- `chrome`: connect to the user's existing Google Chrome session via the
+  Playwright Extension. Requires `PLAYWRIGHT_MCP_EXTENSION_TOKEN` in the running
+  gateway's environment; if absent, the tool reports an error immediately.
+- `chromium`: run independent headless Chrome (`--browser=chrome --headless`).
+- `msedge`, `firefox`, `webkit`: launch the corresponding independent headless
+  browser via the native Playwright `--browser` option. The browser binary must
+  be installed locally.
+
+The `chromium` value is a gateway alias for independent headless Chrome, not a
+native value of `@playwright/mcp@0.0.83`'s `--browser` option. Each browserType
+has its own reusable internal stdio MCP client and retains browser state across calls.
+Independent headless browser modes use `--isolated` to avoid sharing their default
+browser profiles.
+Use a consistent browserType for multi-step tasks. The gateway disconnects
+its MCP children on shutdown, without closing the user's Chrome.
+
+The extension token is read from `process.env.PLAYWRIGHT_MCP_EXTENSION_TOKEN`
+and forwarded under that **exact** official name to the child process. No token
+is supplied as a CLI argument, stored in code, or added to tool metadata.
+`PLAYWRIGHT_MCP_PROFILE_DIR_NAME` may optionally target a particular Chrome
+profile. The extension still must be installed and able to connect.
+
+Playwright snapshots and generated outputs use a temporary directory outside
+the Git working tree. Browser operations require the existing `mcp:command`
+OAuth scope. `PLAYWRIGHT_MCP_ENABLED=false` disables all browser tools, without
+affecting the existing tools or either HTTP connection.
+
+The external Cloudflare and OpenAI tunnels share one HTTP runtime. There is no
+separate stdio gateway process or cross-process notification socket. Resource
+change notifications are sent through the shared HTTP event bus.
+
+The `@playwright/mcp` JSON tool schemas are converted once during tool discovery
+and reused by all requests. Individual `McpServer` instances are still created
+per request to preserve authorization and client isolation.

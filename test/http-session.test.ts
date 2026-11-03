@@ -17,7 +17,8 @@ function testConfig(auditLogFile: string, allowedOrigins: string[] = []): AppCon
     timeoutMs: 3000,
     maxOutputBytes: 4096,
     auditLogFile,
-    auditMaxBytes: 1024 * 1024
+    auditMaxBytes: 1024 * 1024,
+    playwrightEnabled: false
   };
 }
 
@@ -111,6 +112,27 @@ describe('Modern HTTP MCP protocol', () => {
     }
   });
 
+  it('advertises all tools as read-only only when --dangerous is enabled', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'mcp-dangerous-'));
+    const { app, close } = await createApp({
+      ...testConfig(join(dir, 'audit.jsonl')), dangerous: true
+    });
+    try {
+      const response = await rpc(app, 1, 'tools/list');
+      expect(response.status).toBe(200);
+      for (const tool of response.body.result.tools as any[]) {
+        expect(tool.annotations).toMatchObject({
+          readOnlyHint: true, destructiveHint: false,
+          idempotentHint: true, openWorldHint: false
+        });
+        expect(tool._meta.securitySchemes).toEqual([{ type: 'noauth' }]);
+      }
+      expect(response.body.result.tools).toHaveLength(9);
+    } finally {
+      await close();
+    }
+  });
+
   it('isolates two concurrent tools/call requests even with the same request ID', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'mcp-modern-concurrency-'));
     const { app, close } = await createApp(testConfig(join(dir, 'audit.jsonl')));
@@ -173,6 +195,42 @@ describe('Modern HTTP MCP protocol', () => {
       expect(toolExec.executionId).toMatch(/^[a-f0-9-]{36}$/);
     } finally {
       close();
+    }
+  });
+
+  it('accepts the local tunnel token without weakening the public OAuth requirement', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'mcp-tunnel-auth-'));
+    const secret = 'a'.repeat(64);
+    const { app, close } = await createApp({
+      ...testConfig(join(dir, 'audit.jsonl')),
+      authMode: 'oauth_jwt',
+      tunnelToken: secret,
+      publicBaseUrl: 'https://mcp.example.com',
+      resourceIdentifier: 'https://mcp.example.com/mcp',
+      oauthJwt: {
+        provider: 'auth0',
+        issuer: 'https://issuer.example.com/',
+        audience: 'https://mcp.example.com/mcp',
+        requiredScopes: ['mcp:read'],
+        metadataUrl: 'https://mcp.example.com/.well-known/oauth-protected-resource',
+        jwksUrl: 'https://issuer.example.com/.well-known/jwks.json'
+      }
+    });
+    try {
+      const missing = await rpc(app, 1, 'tools/list');
+      expect(missing.status).toBe(401);
+      const invalid = await rpc(app, 2, 'tools/list', {}, { 'X-MCP-Tunnel-Token': 'wrong' });
+      expect(invalid.status).toBe(401);
+      const authorized = await rpc(app, 3, 'tools/list', {}, { 'X-MCP-Tunnel-Token': secret });
+      expect(authorized.status).toBe(200);
+      expect(authorized.body.result.tools.some((tool: any) => tool.name === 'run_command')).toBe(true);
+      const result = await rpc(app, 4, 'tools/call', {
+        name: 'run_command', arguments: { command: 'printf tunnel-shared-backend' }
+      }, { 'X-MCP-Tunnel-Token': secret });
+      expect(result.status).toBe(200);
+      expect(result.body.result.structuredContent.stdout).toBe('tunnel-shared-backend');
+    } finally {
+      await close();
     }
   });
 

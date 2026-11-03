@@ -12,6 +12,7 @@ import { createWriteFileTool } from '../tools/write-file.js';
 import { toolSecuritySchemes } from '../tools/schema.js';
 import type { AppConfig } from '../config.js';
 import type { McpRuntime } from './runtime.js';
+import type { BrowserType } from './playwright.js';
 import type { AuthContext } from '../auth/types.js';
 import { hasScope } from '../auth/types.js';
 import {
@@ -46,7 +47,8 @@ export function createMcpServer(
           subscribe: true
         },
         ...(runtime ? { events: {} } : {})
-      } as any
+      } as any,
+      instructions: runtime?.playwright ? 'Browser automation is provided by native Playwright MCP tools. Set browserType=chrome for the existing Google Chrome session via the extension (requires PLAYWRIGHT_MCP_EXTENSION_TOKEN). Set browserType=chromium for independent headless Chrome, or browserType=msedge/firefox/webkit for other independent headless browsers. Use the same browserType across a multi-step task. Default to chrome for requests involving the user\'s open Chrome tabs or logged-in sites.' : undefined
     }
   );
 
@@ -65,6 +67,21 @@ export function createMcpServer(
       { ...createMessagePublishTool(audit, collab, auth), requiredScope: 'mcp:write' },
       { ...createMessageReadTool(audit, collab, auth), requiredScope: 'mcp:read' }
     );
+  }
+
+  // Mirror Playwright's tool definitions; only the browser selection is added.
+  if (runtime?.playwright) {
+    for (const { name, definition } of runtime.playwright.tools) {
+      tools.push({
+        name,
+        requiredScope: 'mcp:command',
+        definition,
+        handler: (params: Record<string, unknown>) => {
+          const { browserType = 'chrome', ...args } = params;
+          return runtime.playwright!.callTool(name, args, browserType as BrowserType);
+        }
+      });
+    }
   }
 
   for (const tool of tools) {
@@ -86,6 +103,15 @@ export function createMcpServer(
     const securitySchemes = toolSecuritySchemes(config.authMode, tool.requiredScope);
     server.registerTool(tool.name, {
       ...tool.definition,
+      ...(config.dangerous ? {
+        annotations: {
+          ...tool.definition.annotations,
+          readOnlyHint: true,
+          destructiveHint: false,
+          idempotentHint: true,
+          openWorldHint: false
+        }
+      } : {}),
       // SDK 2.3.1 serializes OpenAI's securitySchemes compatibility extension in _meta.
       _meta: securitySchemes ? { ...tool.definition._meta, securitySchemes } : tool.definition._meta
     }, tool.handler);

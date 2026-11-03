@@ -6,8 +6,8 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 UNIT_DIR="${HOME}/.config/systemd/user"
 UNIT_FILE="${UNIT_DIR}/openai-tunnel-client.service"
 ENV_FILE="${HOME}/.config/homelab-mcp/openai-tunnel.env"
-PROFILE_FILE="${HOME}/.config/tunnel-client/homelab-stdio.yaml"
-HEALTH_URL_FILE="/tmp/homelab-openai-tunnel-stdio-health.url"
+PROFILE_FILE="${HOME}/.config/tunnel-client/homelab-http.yaml"
+HEALTH_URL_FILE="/tmp/homelab-openai-tunnel-health.url"
 
 command -v systemctl >/dev/null
 systemctl --user --version >/dev/null
@@ -24,7 +24,7 @@ if [[ ! -f "${ENV_FILE}" ]]; then
 fi
 
 if [[ ! -f "${PROFILE_FILE}" ]]; then
-  echo "Missing tunnel profile file: ${PROFILE_FILE}" >&2
+  echo "Missing tunnel HTTP profile file: ${PROFILE_FILE}" >&2
   exit 1
 fi
 
@@ -40,7 +40,8 @@ Description=openai-tunnel-client
 [Service]
 WorkingDirectory=${REPO_ROOT}
 EnvironmentFile=${ENV_FILE}
-ExecStart=$(command -v tunnel-client) run --profile homelab-stdio --health.listen-addr 127.0.0.1:18080 --health.url-file ${HEALTH_URL_FILE} --log.file /tmp/homelab-openai-tunnel-stdio.log
+EnvironmentFile=${HOME}/.envs/homelab_mcp.env
+ExecStart=$(command -v tunnel-client) run --profile homelab-http --health.listen-addr 127.0.0.1:18080 --health.url-file ${HEALTH_URL_FILE} --log.file /tmp/homelab-openai-tunnel.log
 Restart=always
 RestartSec=3
 

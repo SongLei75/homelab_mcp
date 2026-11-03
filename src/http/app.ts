@@ -42,7 +42,7 @@ export async function createApp(config: AppConfig) {
   const audit = new AuditLogger(config);
   const app = new Hono<HonoEnv>();
 
-  const runtime = await createMcpRuntime(config, 'http');
+  const runtime = await createMcpRuntime(config);
   // A shared event bus delivers core resource notifications across HTTP requests.
   const eventBus = new InMemoryServerEventBus();
   const handler = createMcpHandler(

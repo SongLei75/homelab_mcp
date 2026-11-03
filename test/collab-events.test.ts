@@ -51,6 +51,7 @@ function makeConfig(dir: string): AppConfig {
     maxOutputBytes: 4096,
     auditLogFile: join(dir, 'audit.jsonl'),
     auditMaxBytes: 1024 * 1024,
+    playwrightEnabled: false,
     collab: {
       dbPath: join(dir, 'events.db'),
       dispatcherIntervalMs: 60_000

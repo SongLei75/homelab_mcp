@@ -1,3 +1,4 @@
+import { timingSafeEqual } from 'node:crypto';
 import type { MiddlewareHandler } from 'hono';
 
 import type { AppConfig } from '../config.js';
@@ -11,6 +12,13 @@ import {
 
 const authHeaderName = 'Author' + 'ization';
 const challengeHeaderName = 'WWW-' + 'Authenticate';
+const tunnelHeaderName = 'X-MCP-Tunnel-Token';
+
+function matchesTunnelToken(actual: string, expected: string): boolean {
+  const a = Buffer.from(actual);
+  const b = Buffer.from(expected);
+  return a.length === b.length && timingSafeEqual(a, b);
+}
 
 export function createAuthMiddleware(config: AppConfig, audit: AuditLogger): MiddlewareHandler {
   const oauthJwtVerifier = config.authMode === 'oauth_jwt' && config.oauthJwt
@@ -34,6 +42,27 @@ export function createAuthMiddleware(config: AppConfig, audit: AuditLogger): Mid
         authMode: config.authMode
       });
       return c.json({ error: 'oauth_placeholder_not_implemented' }, 501);
+    }
+
+    // Local tunnel credentials are validated separately from public Auth0 JWTs.
+    // A loopback IP is not sufficient: Cloudflare Tunnel also connects via loopback.
+    const tunnelToken = c.req.header(tunnelHeaderName);
+    if (config.authMode === 'oauth_jwt' && config.tunnelToken && tunnelToken !== undefined) {
+      if (!matchesTunnelToken(tunnelToken, config.tunnelToken)) {
+        await audit.write({ requestId, event: 'auth.local_tunnel', decision: 'deny', reason: 'invalid tunnel token' });
+        return c.json({ error: 'unauthorized' }, 401);
+      }
+      const subject = 'local:openai-tunnel';
+      c.set('auth', {
+        subject,
+        issuer: 'homelab-local',
+        audience: config.resourceIdentifier ?? 'local',
+        scopes: ['mcp:read', 'mcp:command', 'mcp:write'],
+        claims: { sub: subject, iss: 'homelab-local' }
+      });
+      await audit.write({ requestId, event: 'auth.local_tunnel', decision: 'allow', subject });
+      await next();
+      return;
     }
 
     const actual = getBearerToken(c.req.header(authHeaderName));

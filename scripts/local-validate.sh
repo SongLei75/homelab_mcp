@@ -2,10 +2,9 @@
 set -euo pipefail
 
 # Self-contained modern-protocol validation. No OAuth token or public port is needed:
-# it exercises the same HTTP app in-process and starts the real stdio entrypoint.
+# it exercises the single HTTP backend in-process.
 node --input-type=module <<'NODE'
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -35,71 +34,10 @@ function headers(method, name) {
   };
 }
 
-async function stdioSmoke() {
-  const child = spawn(process.execPath, ['dist/stdio.js'], {
-    stdio: ['pipe', 'pipe', 'pipe'],
-    env: { ...process.env, PRIVATE_MCP_EVENTS_DB: join(tmp, 'stdio-events.db') }
-  });
-  let buffer = '';
-  let stderr = '';
-  child.stderr.on('data', data => { stderr += data.toString(); });
-
-  await new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => {
-      child.kill();
-      reject(new Error('stdio modern-protocol test timed out: ' + stderr));
-    }, 6000);
-    let completed = false;
-
-    child.on('error', error => {
-      clearTimeout(timeout);
-      reject(error);
-    });
-    child.on('exit', code => {
-      clearTimeout(timeout);
-      if (completed && code === 0) resolve();
-      else reject(new Error('stdio exited before tool result: ' + code + ' ' + stderr));
-    });
-    child.stdout.on('data', data => {
-      buffer += data.toString();
-      while (buffer.includes('\n')) {
-        const separator = buffer.indexOf('\n');
-        const line = buffer.slice(0, separator);
-        buffer = buffer.slice(separator + 1);
-        if (!line) continue;
-        let result;
-        try {
-          result = JSON.parse(line);
-          assert.equal(result.jsonrpc, '2.0');
-          if (result.id === 1) {
-            assert.deepEqual(result.result.supportedVersions, ['2026-07-28']);
-            child.stdin.write(JSON.stringify(message(2, 'tools/list')) + '\n');
-          } else if (result.id === 2) {
-            assert.deepEqual(result.result.tools.map(tool => tool.name), [
-              'read_logs', 'read_file', 'write_file', 'apply_patch', 'run_command', 'send_file', 'recv_file', 'message_publish', 'message_read'
-            ]);
-            child.stdin.write(JSON.stringify(message(3, 'tools/call', {
-              name: 'run_command', arguments: { command: 'printf stdio-ok' }
-            })) + '\n');
-          } else if (result.id === 3) {
-            assert.equal(result.result.structuredContent.stdout, 'stdio-ok');
-            completed = true;
-            child.stdin.end();
-          }
-        } catch (error) {
-          clearTimeout(timeout);
-          child.kill();
-          reject(error);
-        }
-      }
-    });
-    child.stdin.write(JSON.stringify(message(1, 'server/discover')) + '\n');
-  });
-}
 
 try {
   const config = {
-    ...loadConfig({ ...process.env, MCP_AUTH_MODE: 'off' }),
+    ...loadConfig({ ...process.env, MCP_AUTH_MODE: 'off', PLAYWRIGHT_MCP_ENABLED: 'false' }),
     authMode: 'off',
     auditToStdout: false,
     auditLogFile: join(tmp, 'audit.jsonl'),
@@ -151,8 +89,7 @@ try {
   const resource = received.content.find(item => item.type === 'resource');
   assert.equal(Buffer.from(resource.resource.blob, 'base64').toString('utf8'), 'after\n');
 
-  await stdioSmoke();
-  console.log('OK: modern discover, nine HTTP and stdio tools, binary resource, concurrent isolation');
+  console.log('OK: modern HTTP discover, nine core tools, binary resource, concurrent isolation');
 } finally {
   closeApp?.();
   await rm(tmp, { recursive: true, force: true });
